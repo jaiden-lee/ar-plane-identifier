@@ -189,7 +189,7 @@ Jaiden's app calls `startVoice` after the Start tap and renders the state indica
 2. ✅ Camera heading from device orientation (+ smoothing, declination); desktop dev mode with arrow-key heading.
 3. ✅ Cone filter + compass-bar diamonds + info card for the focused plane, using the fixture.
 4. ✅ Hook up live flight-service (polling, Data mode on the start screen, demo fallback).
-5. Mount voice module; show listening/thinking state and answers.
+5. ✅ Mount voice module; show listening/thinking state and answers (subtitles near the bottom of the view).
 6. Polish: ✅ FOV calibration, ✅ compass strip, ✅ off-screen arrow to the nearest plane, ✅ markers for other in-view planes; still to do: radar mini-map, then (if time) true vertical placement from altitude + phone pitch.
 
 **Wesley — flight service**
@@ -237,6 +237,8 @@ Code lives in `web/src/`:
 
 Run with `npm run dev` in `web/` plus `ngrok http 5173`.
 
+**Running voice-service:** `.venv/Scripts/python -m uvicorn main:app --host 127.0.0.1 --port 8002` in `voice-service/`, with the LLM key in `voice-service/.env` (gitignored; see `.env.example`). It only reads `.env` at startup, so restart after changing it.
+
 **URL options:** `?dev=1` (desktop: arrow keys turn, camera optional, no fullscreen) · `?data=demo|live|fixture` (override the start screen's Data setting) · `?orient=event` (force `deviceorientationabsolute` instead of `AbsoluteOrientationSensor`).
 
 - **Stereo layout:** each eye's image is centered under its Cardboard lens using physical mm (CSS px per mm comes from a per-phone preset of the screen's long edge), not at 1/4 and 3/4 of the screen.
@@ -251,6 +253,7 @@ Run with `npm run dev` in `web/` plus `ngrok http 5173`.
   The feed polls `/api/flights/nearby` every 2 s with `fovDeg=360` (no `radiusKm`) and does the cone filter per frame from `bearingDeg` + live heading. On errors it keeps the last good data. When there are no planes at all, the HUD shows the feed status under the compass (e.g. "No planes · live · waiting for GPS").
 - **Running the full stack locally:** `npm run dev` in `web/`, flight-service with `.venv/Scripts/python -m uvicorn app.main:app --host 127.0.0.1 --port 8001` in `flight-service/`, and `ngrok http 5173`. The Vite proxy targets `127.0.0.1` (not `localhost`): on Windows, `localhost` tries IPv6 first and adds ~2 s per request.
 - **In-headset calibration** (saved in localStorage) is **locked by default** so stray touches do nothing. **Double-tap the middle** to unlock, then middle tap cycles **zoom → tilt → spacing → shift → size → fov → info → locked**, left/right taps adjust. It re-locks after 6 s idle (except on info). **Tilt** matters most in practice: the phone never sits perfectly level in the headset, and a crooked phone puts one eye's image higher than the other (double crosshair). Tilt rotates the whole two-eye layout to compensate.
+- **Voice (Allison's `web/src/voice/`):** `startVoice()` is called synchronously inside the Start tap (mic + speech need the gesture), when the start screen's **Voice** checkbox is on (default). Each frame `drawHud()` returns the focused plane and in-view planes (with `offsetDeg`); the voice module reads those when a question is asked. Voice state, the question, and the answer render as subtitles near the bottom (`VOICE_Y` in `hud.ts`); answers linger 7 s after speaking. Answers are spoken by the phone's `speechSynthesis` (the LLM only returns text). Desktop dev mode: **V** = `voice.listen()` (skip the wake phrase).
 - **HUD rule:** anything drawn on the overlay must be drawn identically in **both** eyes, or it won't fuse (text shown to one eye only flickers and is hard to read).
 - **Exiting:** **long-press (1.5 s)** returns to the start screen. Leaving fullscreen (often an accidental back-swipe from the headset edge) does *not* exit the view: a "tap to resume" hint appears and the next tap re-enters fullscreen. The back gesture is swallowed while in the view.
 

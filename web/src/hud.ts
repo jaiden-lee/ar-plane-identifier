@@ -6,11 +6,29 @@
 //   below the bar: degree ticks/labels, current heading
 //   right under that: info card for the focused plane, attached to the compass
 //                  (drops down like a notification)
+// Voice ("hey grok") status and answers show as subtitles near the bottom.
 // The middle of the view stays clear.
 
 import { cardLines, flightLabel } from './format';
 import { halfFovDeg, normalizeDeg, projectX, signedDiffDeg } from './geo';
 import type { Plane } from './planes';
+import type { VoiceState } from './voice';
+
+/** What the voice subtitles show. Timing (when to clear the answer) is handled by main.ts. */
+export type VoiceHud = {
+  state: VoiceState;
+  transcript: string | null;
+  answer: string | null;
+  error: string | null;
+};
+
+/** Planes the viewer is looking at this frame (offsetDeg filled in), for voice context. */
+export type HudResult = {
+  focus: Plane | null;
+  inView: Plane[];
+};
+
+const NO_PLANES: HudResult = { focus: null, inView: [] };
 
 export type HudState = {
   headingDeg: number | null;
@@ -21,6 +39,8 @@ export type HudState = {
   status: string;
   /** Frame timestamp (same for both eyes) for animations. */
   timeMs: number;
+  /** null = voice disabled. */
+  voice: VoiceHud | null;
 };
 
 const COLORS = {
@@ -50,16 +70,27 @@ const CARD_ANIM_MS = 180;
 // Tracks when the current focus plane became focused, for the pop-up animation.
 let focusAnim: { id: string; since: number } | null = null;
 
-export function drawHud(ctx: CanvasRenderingContext2D, w: number, h: number, s: HudState): void {
+/** Subtitle area for voice: bottom edge of the answer panel (fraction of eye height). */
+const VOICE_Y = 0.84;
+/** How long the idle "Say Hey Grok" hint stays after start (ms). */
+const HINT_MS = 15000;
+
+export function drawHud(ctx: CanvasRenderingContext2D, w: number, h: number, s: HudState): HudResult {
   ctx.clearRect(0, 0, w, h);
   ctx.textBaseline = 'middle';
+  const result = drawPlanes(ctx, w, h, s);
+  if (s.voice) drawVoice(ctx, w, h, s.voice, s.timeMs);
+  return result;
+}
+
+function drawPlanes(ctx: CanvasRenderingContext2D, w: number, h: number, s: HudState): HudResult {
   const barY = h * COMPASS_Y;
   const x0 = (w * (1 - COMPASS_WIDTH)) / 2;
   const x1 = w - x0;
 
   if (s.headingDeg == null) {
     label(ctx, w / 2, barY, 'Waiting for compass…', fs(14), COLORS.text, 'center', true);
-    return;
+    return NO_PLANES;
   }
   const heading = s.headingDeg;
   drawCompass(ctx, w, barY, x0, x1, heading, s.halfTan);
@@ -74,28 +105,117 @@ export function drawHud(ctx: CanvasRenderingContext2D, w: number, h: number, s: 
   if (s.planes.length === 0) {
     focusAnim = null;
     label(ctx, w / 2, labelRowY(barY) + fs(18), `No planes · ${s.status}`, fs(11), COLORS.text, 'center');
-    return;
+    return NO_PLANES;
   }
 
   if (onBar.length === 0) {
     focusAnim = null;
     const nearest = withOffset.sort((a, b) => Math.abs(a.off) - Math.abs(b.off))[0];
     if (nearest) drawEdgeArrow(ctx, barY, x0, x1, nearest.p, nearest.off);
-    return;
+    return NO_PLANES;
   }
 
   const closest = onBar.reduce((a, b) => (Math.abs(b.off) < Math.abs(a.off) ? b : a));
   const focus = Math.abs(closest.off) <= FOCUS_HALF_DEG ? closest : null;
   for (const m of onBar) if (m !== focus) drawDiamond(ctx, m.x, barY, false);
+  const inView = onBar.map((m) => ({ ...m.p, offsetDeg: m.off }));
 
   if (!focus) {
     focusAnim = null;
-    return;
+    return { focus: null, inView };
   }
   if (focusAnim?.id !== focus.p.id) focusAnim = { id: focus.p.id, since: s.timeMs };
   const t = Math.min(1, (s.timeMs - focusAnim.since) / CARD_ANIM_MS);
   drawDiamond(ctx, focus.x, barY, true);
   drawCard(ctx, w, focus.x, barY, cardLines(focus.p), t);
+  return { focus: { ...focus.p, offsetDeg: focus.off }, inView };
+}
+
+let voiceStartMs: number | null = null;
+
+/** Voice subtitles: status pill, the question, and the answer, stacked up from VOICE_Y. */
+function drawVoice(ctx: CanvasRenderingContext2D, w: number, h: number, v: VoiceHud, timeMs: number) {
+  voiceStartMs ??= timeMs;
+  const maxW = w * 0.78;
+  let bottom = h * VOICE_Y;
+
+  if (v.error) {
+    label(ctx, w / 2, bottom, v.error, fs(10), '#ff8a80', 'center');
+    bottom -= fs(16);
+  }
+
+  if (v.answer) {
+    ctx.save();
+    ctx.font = `500 ${fs(12)}px ${FONT}`;
+    const lines = wrapLines(ctx, v.answer, maxW - 16).slice(0, 4);
+    const lineH = fs(12) + 4;
+    const panelW = Math.min(maxW, Math.max(...lines.map((l) => ctx.measureText(l).width)) + 16);
+    const panelH = lines.length * lineH + 10;
+    const x = (w - panelW) / 2;
+    const y = bottom - panelH;
+    ctx.fillStyle = COLORS.panel;
+    roundRect(ctx, x, y, panelW, panelH, 6);
+    ctx.fill();
+    ctx.fillStyle = COLORS.text;
+    ctx.textAlign = 'left';
+    lines.forEach((l, i) => ctx.fillText(l, x + 8, y + 5 + lineH * (i + 0.5)));
+    ctx.restore();
+    bottom = y - fs(10);
+  }
+
+  if (v.transcript && (v.answer || v.state === 'thinking')) {
+    ctx.save();
+    ctx.font = `italic 500 ${fs(11)}px ${FONT}`;
+    const q = wrapLines(ctx, `“${v.transcript}”`, maxW)[0];
+    ctx.restore();
+    label(ctx, w / 2, bottom, q, fs(11), 'rgba(255,255,255,0.75)', 'center');
+    bottom -= fs(18);
+  }
+
+  const pulse = 0.5 + 0.5 * Math.sin(timeMs / 180);
+  if (v.state === 'listening') pill(ctx, w / 2, bottom, 'Listening…', `rgba(255, 82, 82, ${0.5 + 0.5 * pulse})`);
+  else if (v.state === 'thinking') pill(ctx, w / 2, bottom, `Thinking${'.'.repeat(1 + (Math.floor(timeMs / 300) % 3))}`, COLORS.hud);
+  else if (v.state === 'speaking') pill(ctx, w / 2, bottom, 'Grok', COLORS.focus);
+  else if (!v.answer && !v.error && timeMs - voiceStartMs < HINT_MS) {
+    label(ctx, w / 2, bottom, 'Say “Hey Grok…”', fs(10), 'rgba(255,255,255,0.6)', 'center');
+  }
+}
+
+/** Small rounded status label with a colored dot. */
+function pill(ctx: CanvasRenderingContext2D, cx: number, cy: number, text: string, dot: string) {
+  ctx.save();
+  ctx.font = `700 ${fs(11)}px ${FONT}`;
+  const tw = ctx.measureText(text).width;
+  const pw = tw + 26;
+  const ph = fs(11) + 8;
+  ctx.fillStyle = COLORS.panel;
+  roundRect(ctx, cx - pw / 2, cy - ph / 2, pw, ph, ph / 2);
+  ctx.fill();
+  ctx.fillStyle = dot;
+  ctx.beginPath();
+  ctx.arc(cx - pw / 2 + 10, cy, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = COLORS.text;
+  ctx.textAlign = 'left';
+  ctx.fillText(text, cx - pw / 2 + 18, cy);
+  ctx.restore();
+}
+
+/** Greedy word wrap using the context's current font. */
+function wrapLines(ctx: CanvasRenderingContext2D, text: string, maxW: number): string[] {
+  const lines: string[] = [];
+  let line = '';
+  for (const word of text.split(/\s+/)) {
+    const next = line ? `${line} ${word}` : word;
+    if (line && ctx.measureText(next).width > maxW) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = next;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
 }
 
 function drawCompass(

@@ -51,6 +51,8 @@ export type Settings = {
    *   fixture - shared/fixtures/demo-planes.json, no backend
    */
   dataMode: DataMode;
+  /** "Hey Grok" voice assistant (Allison's module in src/voice/). */
+  voiceEnabled: boolean;
 };
 
 export type DataMode = 'demo' | 'live' | 'fixture';
@@ -65,6 +67,7 @@ export const DEFAULT_SETTINGS: Settings = {
   cameraZoom: null,
   cameraId: '',
   dataMode: 'demo',
+  voiceEnabled: true,
 };
 
 const STORAGE_KEY = 'ar-plane-settings-v4';

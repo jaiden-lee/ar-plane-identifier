@@ -3,12 +3,15 @@ import type { DataMode, Settings } from './config';
 import { describeStream, getZoom, getZoomRange, listCameras, setZoom, startCamera } from './camera';
 import { halfFovDeg, normalizeDeg, visibleHalfTan } from './geo';
 import { drawHud } from './hud';
+import type { HudResult, VoiceHud } from './hud';
 import { requestOrientationPermission, startOrientation } from './orientation';
 import type { OrientationTracker } from './orientation';
 import { startFixtureFeed, startLiveFeed, watchPosition } from './planes';
 import type { PlaneFeed } from './planes';
 import { createStereoView } from './stereo';
 import type { StereoView } from './stereo';
+import { startVoice } from './voice';
+import type { VoiceHandle } from './voice';
 
 // URL options:
 //   ?dev=1          desktop dev mode: arrow keys set the heading, camera optional, no fullscreen
@@ -24,6 +27,7 @@ const presetSelect = document.getElementById('preset-select') as HTMLSelectEleme
 const ipdInput = document.getElementById('ipd-input') as HTMLInputElement;
 const cameraSelect = document.getElementById('camera-select') as HTMLSelectElement;
 const dataSelect = document.getElementById('data-select') as HTMLSelectElement;
+const voiceCheck = document.getElementById('voice-check') as HTMLInputElement;
 const startBtn = document.getElementById('start-btn') as HTMLButtonElement;
 const startStatus = document.getElementById('start-status')!;
 const stereoEl = document.getElementById('stereo')!;
@@ -34,6 +38,14 @@ let stream: MediaStream | null = null;
 let orientation: OrientationTracker | null = null;
 let feed: PlaneFeed | null = null;
 let gps: ReturnType<typeof watchPosition> | null = null;
+let voice: VoiceHandle | null = null;
+let voiceHud: VoiceHud | null = null;
+let answerTimer = 0;
+let voiceErrorTimer = 0;
+/** What the viewer was looking at last frame; the voice module reads this when asked. */
+let lastView: HudResult = { focus: null, inView: [] };
+/** How long an answer stays on screen after Grok finishes speaking. */
+const ANSWER_LINGER_MS = 7000;
 let rafId = 0;
 let devHeading = 0;
 /** Latest computed half-FOV, for the calibration toast and debug line. */
@@ -67,6 +79,7 @@ async function initStartScreen() {
   presetSelect.value = settings.presetId;
   ipdInput.value = String(settings.ipdMm);
   dataSelect.value = DATA_OVERRIDE ?? settings.dataMode;
+  voiceCheck.checked = settings.voiceEnabled;
   await refreshCameraList();
 
   if (DEV) startStatus.textContent = 'Dev mode: ← → turn (hold Shift for 10°).';
@@ -91,6 +104,7 @@ function readSettingsFromForm() {
     ipdMm: Number.isFinite(ipd) && ipd > 0 ? ipd : DEFAULT_IPD_MM,
     cameraId: cameraSelect.value,
     dataMode: dataSelect.value as DataMode,
+    voiceEnabled: voiceCheck.checked,
   };
   saveSettings(settings);
 }
@@ -156,8 +170,44 @@ function frame() {
     planes: feedState?.planes ?? [],
     status: feedState?.status ?? '',
     timeMs: performance.now(),
+    voice: voiceHud,
   };
-  for (const eye of view.eyes) drawHud(eye.ctx, width, height, hud);
+  // Both eyes get identical input, so either result works; keep the first.
+  const [left, right] = view.eyes;
+  lastView = drawHud(left.ctx, width, height, hud);
+  drawHud(right.ctx, width, height, hud);
+}
+
+/** Starts Allison's voice module. Must run synchronously inside the Start tap (mic + speech need a gesture). */
+function startVoiceAssistant() {
+  voiceHud = { state: 'idle', transcript: null, answer: null, error: null };
+  const hud = voiceHud;
+  voice = startVoice({
+    getCurrentPlane: () => lastView.focus,
+    getNearbyPlanes: () => lastView.inView,
+    onStateChange: (s) => {
+      hud.state = s;
+      if (s === 'listening') {
+        // New question: clear the previous exchange.
+        clearTimeout(answerTimer);
+        hud.transcript = null;
+        hud.answer = null;
+      } else if (s === 'idle' && hud.answer) {
+        clearTimeout(answerTimer);
+        answerTimer = window.setTimeout(() => {
+          hud.transcript = null;
+          hud.answer = null;
+        }, ANSWER_LINGER_MS);
+      }
+    },
+    onTranscript: (t) => (hud.transcript = t),
+    onAnswer: (a) => (hud.answer = a),
+    onError: (m) => {
+      hud.error = m;
+      clearTimeout(voiceErrorTimer);
+      voiceErrorTimer = window.setTimeout(() => (hud.error = null), 4000);
+    },
+  });
 }
 
 /** DOM overlay: crosshair, calibration toast, errors, debug line. Redrawn on events, not per frame. */
@@ -183,6 +233,7 @@ async function start() {
   // Both must start synchronously inside the tap (user-gesture requirements).
   const immersive = DEV ? Promise.resolve() : enterImmersive();
   const orientPermission = DEV ? Promise.resolve() : requestOrientationPermission();
+  if (settings.voiceEnabled) startVoiceAssistant();
   startBtn.disabled = true;
   startStatus.textContent = 'Starting camera…';
 
@@ -228,6 +279,7 @@ async function start() {
     }
   } catch (err) {
     startStatus.textContent = `Could not start: ${(err as Error).message}`;
+    stopVoiceAssistant();
   } finally {
     startBtn.disabled = false;
   }
@@ -255,8 +307,17 @@ function watchForFrames(s: MediaStream) {
   }, 3000);
 }
 
+function stopVoiceAssistant() {
+  voice?.stop();
+  voice = null;
+  voiceHud = null;
+  clearTimeout(answerTimer);
+  clearTimeout(voiceErrorTimer);
+}
+
 /** Back to the start screen (e.g. after the Android back gesture exits fullscreen). */
 function stop() {
+  stopVoiceAssistant();
   cancelAnimationFrame(rafId);
   clearTimeout(lockTimer);
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
@@ -415,6 +476,8 @@ window.addEventListener('keydown', (e) => {
   const step = e.shiftKey ? 10 : 2;
   if (e.key === 'ArrowLeft') devHeading = normalizeDeg(devHeading - step);
   else if (e.key === 'ArrowRight') devHeading = normalizeDeg(devHeading + step);
+  // Skip the wake phrase on desktop: V = start listening for a question.
+  else if (e.key === 'v') voice?.listen();
 });
 // Leaving fullscreen (often an accidental back-swipe from the headset edge) no longer exits the
 // view; the overlay shows a "tap to resume" hint instead.

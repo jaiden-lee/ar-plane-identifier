@@ -52,6 +52,13 @@ body {
   color: var(--muted);
 }
 
+#start-screen label.checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg);
+}
+
 #start-screen select,
 #start-screen input {
   min-width: 200px;
