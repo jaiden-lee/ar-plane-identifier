@@ -1,0 +1,230 @@
+"""
+voice-service — POST /api/voice/ask
+
+Takes a spoken question plus the plane the user is looking at, builds a prompt
+with that plane as context, asks Grok (xAI), and returns a short spoken-friendly
+answer. See root CLAUDE.md for the contract.
+
+Run:  uvicorn main:app --port 8002 --reload
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+from pathlib import Path
+from typing import Any, Optional
+
+from dotenv import load_dotenv
+from fastapi import FastAPI
+from pydantic import BaseModel, Field
+
+load_dotenv(Path(__file__).parent / ".env")
+log = logging.getLogger("voice-service")
+logging.basicConfig(level=logging.INFO)
+
+XAI_API_KEY = os.getenv("XAI_API_KEY", "")
+XAI_MODEL = os.getenv("XAI_MODEL", "grok-4-fast")
+XAI_BASE_URL = os.getenv("XAI_BASE_URL", "https://api.x.ai/v1")
+FIXTURE_PATH = Path(__file__).parent.parent / "shared" / "fixtures" / "demo-planes.json"
+
+# ---------------------------------------------------------------------------
+# Models (mirror the `Plane` contract in CLAUDE.md; everything optional except
+# position/distance/bearing, but we stay lenient so a partial plane never 422s)
+# ---------------------------------------------------------------------------
+
+
+class Plane(BaseModel):
+    id: str
+    callsign: Optional[str] = None
+    registration: Optional[str] = None
+    typeCode: Optional[str] = None
+    typeName: Optional[str] = None
+    airline: Optional[str] = None
+    origin: Optional[str] = None
+    destination: Optional[str] = None
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+    altitudeFt: Optional[float] = None
+    groundSpeedKt: Optional[float] = None
+    trackDeg: Optional[float] = None
+    distanceKm: Optional[float] = None
+    bearingDeg: Optional[float] = None
+
+
+class AskRequest(BaseModel):
+    question: str
+    plane: Optional[Plane] = None
+    nearbyPlanes: list[Plane] = Field(default_factory=list)
+    # Convenience for curl testing: resolve a plane by id/callsign from the demo
+    # fixture when the caller doesn't send a full `plane` object.
+    planeId: Optional[str] = None
+
+
+class AskResponse(BaseModel):
+    answer: str
+
+
+# ---------------------------------------------------------------------------
+# Plane lookup (fixture only — the web app normally sends the full plane)
+# ---------------------------------------------------------------------------
+
+
+def _load_fixture_planes() -> list[dict[str, Any]]:
+    try:
+        return json.loads(FIXTURE_PATH.read_text()).get("planes", [])
+    except Exception as e:  # noqa: BLE001
+        log.warning("could not read fixture %s: %s", FIXTURE_PATH, e)
+        return []
+
+
+def find_plane(plane_id: str) -> Optional[Plane]:
+    key = plane_id.strip().lower()
+    for p in _load_fixture_planes():
+        if key in {str(p.get("id", "")).lower(), str(p.get("callsign") or "").lower()}:
+            return Plane(**p)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Prompt building
+# ---------------------------------------------------------------------------
+
+SYSTEM_PROMPT = """You are Grok, a witty aviation buddy living inside an AR headset. \
+The user is looking up at the sky at a plane and just asked you a question out loud.
+
+Rules:
+- Your answer is read aloud by text-to-speech. Reply in plain spoken English: \
+1 to 3 short sentences, no markdown, no lists, no emojis, no abbreviations that sound odd spoken.
+- Use the plane data provided as the source of truth for what the user is looking at. \
+Don't invent flight numbers, routes, or airlines that aren't in the data. \
+If a field is missing, say you don't know that detail (briefly) and move on.
+- You may use general aviation knowledge for questions the data can't answer \
+(e.g. how many seats an A321 has, how fast a 737 cruises, what an airline is).
+- Say airport codes as their city or airport name when you know it (ATL -> Atlanta, LGA -> LaGuardia).
+- Be fun and a little punchy, but accurate. Never lecture.
+"""
+
+
+def _fmt(v: Any, unit: str = "") -> str:
+    if v is None:
+        return "unknown"
+    if isinstance(v, float) and v.is_integer():
+        v = int(v)
+    return f"{v}{unit}"
+
+
+def describe_plane(p: Plane, label: str = "Plane the user is looking at") -> str:
+    lines = [
+        f"{label}:",
+        f"  ICAO hex id: {p.id}",
+        f"  Callsign / flight: {_fmt(p.callsign)}",
+        f"  Registration (tail number): {_fmt(p.registration)}",
+        f"  Aircraft: {_fmt(p.typeName)} (type code {_fmt(p.typeCode)})",
+        f"  Airline: {_fmt(p.airline)}",
+        f"  Route: {_fmt(p.origin)} -> {_fmt(p.destination)}",
+        f"  Altitude: {_fmt(p.altitudeFt, ' ft')}",
+        f"  Ground speed: {_fmt(p.groundSpeedKt, ' knots')}",
+        f"  Heading (track): {_fmt(p.trackDeg, ' degrees')}",
+        f"  Distance from user: {_fmt(p.distanceKm, ' km')}",
+        f"  Bearing from user: {_fmt(p.bearingDeg, ' degrees')}",
+    ]
+    return "\n".join(lines)
+
+
+def build_messages(req: AskRequest, plane: Optional[Plane]) -> list[dict[str, str]]:
+    if plane is None:
+        context = (
+            "No plane is currently in the user's view. If they ask about 'that plane', "
+            "tell them you don't see one right now and suggest they look around."
+        )
+    else:
+        context = describe_plane(plane)
+
+    if req.nearbyPlanes:
+        others = [p for p in req.nearbyPlanes if not plane or p.id != plane.id]
+        if others:
+            context += "\n\nOther planes nearby (not centered):\n" + "\n".join(
+                f"  - {_fmt(p.callsign)} ({_fmt(p.typeName)}), "
+                f"{_fmt(p.distanceKm, ' km')} away, bearing {_fmt(p.bearingDeg)}"
+                for p in others[:8]
+            )
+
+    return [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": f"{context}\n\nUser's question: {req.question.strip()}"},
+    ]
+
+
+# ---------------------------------------------------------------------------
+# LLM call with an offline fallback (demo must never die)
+# ---------------------------------------------------------------------------
+
+
+def fallback_answer(req: AskRequest, plane: Optional[Plane]) -> str:
+    if plane is None:
+        return "I don't see a plane right now. Try looking around the sky."
+    who = plane.callsign or plane.registration or "an aircraft"
+    what = plane.typeName or plane.typeCode or "an unknown type"
+    bits = [f"That's {who}, {('a ' if what[0].lower() not in 'aeiou' else 'an ') + what}"]
+    if plane.airline:
+        bits[0] += f" operated by {plane.airline}"
+    bits[0] += "."
+    if plane.origin or plane.destination:
+        bits.append(f"It's flying from {plane.origin or 'somewhere'} to {plane.destination or 'somewhere'}.")
+    if plane.altitudeFt is not None:
+        bits.append(f"It's at about {int(plane.altitudeFt):,} feet.")
+    return " ".join(bits)
+
+
+async def ask_grok(messages: list[dict[str, str]]) -> str:
+    from openai import AsyncOpenAI  # lazy import keeps startup snappy
+
+    # Short timeout + one retry: a spoken answer that arrives late is worse than the
+    # canned fallback. Gemini free tier throws occasional 503s under load.
+    client = AsyncOpenAI(api_key=XAI_API_KEY, base_url=XAI_BASE_URL, timeout=8, max_retries=1)
+    resp = await client.chat.completions.create(
+        model=XAI_MODEL,
+        messages=messages,
+        max_tokens=512,  # thinking models count reasoning tokens against this; 200 truncated answers
+        temperature=0.7,
+    )
+    text = (resp.choices[0].message.content or "").strip()
+    # Belt and braces: strip any markdown-ish characters that would be read aloud.
+    return text.replace("**", "").replace("*", "").replace("#", "").strip()
+
+
+# ---------------------------------------------------------------------------
+# App
+# ---------------------------------------------------------------------------
+
+app = FastAPI(title="voice-service")
+
+
+@app.get("/api/voice/health")
+async def health() -> dict[str, Any]:
+    return {"ok": True, "model": XAI_MODEL, "hasKey": bool(XAI_API_KEY)}
+
+
+@app.post("/api/voice/ask", response_model=AskResponse)
+async def ask(req: AskRequest) -> AskResponse:
+    plane = req.plane
+    if plane is None and req.planeId:
+        plane = find_plane(req.planeId)
+        if plane is None:
+            log.info("planeId %r not found in fixture", req.planeId)
+
+    messages = build_messages(req, plane)
+
+    if not XAI_API_KEY:
+        log.warning("XAI_API_KEY not set; using fallback answer")
+        return AskResponse(answer=fallback_answer(req, plane))
+
+    try:
+        answer = await ask_grok(messages)
+        if not answer:
+            raise RuntimeError("empty answer from model")
+        return AskResponse(answer=answer)
+    except Exception as e:  # noqa: BLE001
+        log.exception("Grok call failed: %s", e)
+        return AskResponse(answer=fallback_answer(req, plane))
