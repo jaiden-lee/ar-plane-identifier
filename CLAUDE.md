@@ -227,3 +227,7 @@ Code lives in `web/src/`: `config.ts` (phone presets + persisted settings), `cam
 - **In-headset calibration** (saved in localStorage): tap the middle to cycle **zoom → tilt → spacing → shift → size → info**, tap left/right to adjust. **Tilt** matters most in practice: the phone never sits perfectly level in the headset, and a crooked phone puts one eye's image higher than the other (double crosshair). Tilt rotates the whole two-eye layout to compensate.
 - **HUD rule:** anything drawn on the overlay must be drawn identically in **both** eyes, or it won't fuse (text shown to one eye only flickers and is hard to read).
 - **Exiting:** the Android back gesture leaves fullscreen and returns to the start screen.
+
+## Voice service notes
+
+Status, decisions, gotchas, and the browser-module plan for the voice workstream live in [`voice-service/CLAUDE.md`](voice-service/CLAUDE.md). Read that before touching `voice-service/` or `web/src/voice/`. Headline: the LLM behind `/api/voice/ask` is currently **Gemini** (free tier), not Grok; the provider is swappable via env vars and the contract is unchanged.
