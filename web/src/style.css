@@ -113,6 +113,14 @@ body {
   display: block;
 }
 
+.eye-hud {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
 .eye-overlay {
   position: absolute;
   inset: 0;
@@ -170,4 +178,17 @@ body {
   color: #fff;
   font-size: 12px;
   text-align: center;
+}
+
+.hud-hint {
+  position: absolute;
+  left: 50%;
+  top: 70%;
+  transform: translateX(-50%);
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.6);
+  color: var(--fg);
+  font-size: 11px;
+  white-space: nowrap;
 }

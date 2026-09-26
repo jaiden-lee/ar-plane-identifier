@@ -11,8 +11,8 @@ Hackathon project (built Fri 2026-09-25 → Sat 2026-09-26). Team: **Jaiden, Wes
 Point your phone (in a Google Cardboard headset) at a plane in the sky, and see a label telling you what it is: flight number, aircraft model, origin → destination, etc.
 
 - The phone shows a **stereo view**: two identical side-by-side camera previews, one per eye, so it works in Cardboard.
-- A label is drawn identically in both halves, **positioned horizontally where the plane is** within the view (not just fixed HUD text).
-- Only the **plane closest to the center of view** gets the full info card. Other in-view planes may get a small marker if it's easy.
+- A "headband" **compass bar** near the top of the view (drawn identically in both halves) shows a diamond for every plane in view, **positioned at the plane's real direction**.
+- The plane you're looking at (within ±7.5° of center) gets an **info card** that drops down right under the compass. The middle of the view stays clear.
 - Flight data comes from **adsb.lol** (free ADS-B API).
 
 **Stretch goal:** a voice agent (Grok). Say "hey Grok, ..." and ask about the plane you're looking at. Grok gets the plane's data as context and can also answer from general knowledge ("how many seats does an A321 have?").
@@ -25,7 +25,7 @@ We don't do any computer vision. We use the phone's sensors plus geometry:
 2. **View cone:** two rays from the user at `heading − fov/2` and `heading + fov/2`, where `fov` is the **horizontal field of view of what's shown in each eye** (so labels line up with the camera image). The browser can't report camera FOV, so it's a calibrated config constant.
 3. **Nearby planes:** fetch all aircraft within a radius of the user (default ~15 mi / 25 km).
 4. **Filter:** for each plane, take the bearing from the user to the plane. If it falls between the two rays, the plane is "in view".
-5. **Display:** full card for the plane closest to center. Label x-position = `eyeCenterX + (angleDiff / (fov/2)) * (eyeWidth/2)`.
+5. **Display:** a diamond on the compass bar for every plane in view; the info card only for the closest plane **if it's within ±7.5° of center** (the "focus cone", 15° total). Screen x uses a pinhole projection: `x = eyeCenterX + tan(angleDiff) / tan(fov/2) * (eyeWidth/2)`.
 
 ### 2D simplification
 
@@ -186,11 +186,11 @@ Jaiden's app calls `startVoice` after the Start tap and renders the state indica
 
 **Jaiden — web app + integration**
 1. ✅ Start button → rear camera → side-by-side stereo view on Android Chrome over ngrok, with in-headset calibration (see [Web app notes](#web-app-notes)).
-2. Camera heading from device orientation (+ smoothing, declination); desktop dev mode with arrow-key heading.
-3. Cone filter + positioned label + info card for the centered plane, using the fixture.
+2. ✅ Camera heading from device orientation (+ smoothing, declination); desktop dev mode with arrow-key heading.
+3. ✅ Cone filter + compass-bar diamonds + info card for the focused plane, using the fixture.
 4. Hook up live flight-service (polling, demo toggle).
 5. Mount voice module; show listening/thinking state and answers.
-6. Polish: FOV calibration, compass strip, off-screen arrows to the nearest plane, radar mini-map, markers for other in-view planes, then (if time) true vertical label placement from altitude + phone pitch.
+6. Polish: ✅ FOV calibration, ✅ compass strip, ✅ off-screen arrow to the nearest plane, ✅ markers for other in-view planes; still to do: radar mini-map, then (if time) true vertical placement from altitude + phone pitch.
 
 **Wesley — flight service**
 1. `/api/flights/nearby` returning the contract shape from adsb.lol with correct bearing/distance.
@@ -208,10 +208,11 @@ Jaiden's app calls `startVoice` after the Start tap and renders the state indica
 
 - **Stack:** `web/` = Vite + **plain TypeScript** (no framework; the HUD redraws every frame). `flight-service/` and `voice-service/` = Python + FastAPI (each with its own `requirements.txt` and `.venv`). The only coupling between them is the HTTP/JSON contracts above.
 - **Demo location:** user pinned to **Georgia Tech campus (33.7756, -84.3963)**, with Atlanta Hartsfield-Jackson (ATL, ~15 km south) traffic around it. Demo radius may be raised (e.g. ~30–40 km) to get enough planes spread around 360°. Wesley may adjust if the real snapshot is lopsided.
-- **Declination** for Atlanta is roughly 5–6° W (verify with NOAA's calculator; hardcode it).
+- **Heading is true north** from the compass (no manual "recenter"), with Atlanta declination hardcoded as −5.3° (`MAG_DECLINATION_DEG` in `web/src/orientation.ts`). Indoors it may be off by 10–30°; accepted.
+- **Demo plane layout:** planes spread around 360° (like real traffic); the off-screen arrow guides the viewer to the nearest one.
 - **Target phones:** Google **Pixel 10** (primary), Galaxy S22+ (backup), Android Chrome. iPhone 13 mini is not a demo target.
-- **Info card (v1):** `DL 1234 · Delta` / `Airbus A321` / `LGA → ATL` / `4,200 ft · 180 kt · 8.4 km`. Full card only for the plane closest to center.
-- **Label placement:** horizontal position from the plane's angle off-center; vertical position is a fixed band for now (true elevation placement is a stretch).
+- **Info card:** 3 compact lines: `DL 1234 · Delta Air Lines` / `Airbus A321-200 · LGA → ATL` / `4,200 ft · 180 kt · 8.4 km`. ICAO callsigns are shown with IATA codes for common airlines (`DAL1234` → `DL 1234`, map in `web/src/format.ts`).
+- **HUD layout:** everything hangs off the compass bar near the top of the view (diamonds on the bar, degree labels + heading under it, info card attached under that). Nothing in the middle of the view except the crosshair. Planes are placed horizontally only (true elevation placement is a stretch).
 - **Fixture:** `shared/fixtures/demo-planes.json` currently holds **synthetic** planes (correct bearings/distances from GT) so web work can start now. Wesley replaces it with a real adsb.lol snapshot of the same shape.
 
 ## Decisions still open
@@ -220,13 +221,32 @@ Jaiden's app calls `startVoice` after the Start tap and renders the state indica
 
 ## Web app notes
 
-Code lives in `web/src/`: `config.ts` (phone presets + persisted settings), `camera.ts` (rear camera + hardware zoom), `stereo.ts` (two-eye layout), `main.ts` (start flow, HUD, calibration). Run with `npm run dev` in `web/` plus `ngrok http 5173`.
+Code lives in `web/src/`:
+
+| File | What |
+|---|---|
+| `main.ts` | Start flow, per-frame loop, DOM overlay (crosshair, toasts), calibration input |
+| `config.ts` | Phone presets (screen size, camera FOV) + persisted settings |
+| `camera.ts` | Rear camera + hardware zoom |
+| `stereo.ts` | Two-eye layout (lens spacing, tilt, shift, size) with a HUD canvas per eye |
+| `orientation.ts` | Rear-camera heading + pitch from sensors, smoothing, declination |
+| `geo.ts` | Angle helpers, visible-FOV estimate, pinhole projection |
+| `planes.ts` | `Plane` type, fixture feed, live flight-service feed, GPS |
+| `hud.ts` | Canvas HUD: compass bar, diamonds, info card, edge arrow. Layout constants at the top |
+| `format.ts` | Info-card text, callsign formatting |
+
+Run with `npm run dev` in `web/` plus `ngrok http 5173`.
+
+**URL options:** `?dev=1` (desktop: arrow keys turn, camera optional, no fullscreen) · `?source=live` (poll flight-service instead of the fixture) · `?demo=0` (with live: real GPS instead of the demo location) · `?orient=event` (force `deviceorientationabsolute` instead of `AbsoluteOrientationSensor`).
 
 - **Stereo layout:** each eye's image is centered under its Cardboard lens using physical mm (CSS px per mm comes from a per-phone preset of the screen's long edge), not at 1/4 and 3/4 of the screen.
 - **Camera:** requests a **4:3** stream (1440×1080). A 16:9 stream cropped to the near-square eye loses ~37% of its width and looks very zoomed in. The image fills each eye (`object-fit: cover`); the field of view is widened with the camera's hardware zoom (defaults to the minimum, i.e. ultrawide), not by shrinking the image.
-- **In-headset calibration** (saved in localStorage): tap the middle to cycle **zoom → tilt → spacing → shift → size → info**, tap left/right to adjust. **Tilt** matters most in practice: the phone never sits perfectly level in the headset, and a crooked phone puts one eye's image higher than the other (double crosshair). Tilt rotates the whole two-eye layout to compensate.
+- **Heading:** the rear camera looks along the device's −Z axis, so heading = compass direction of −(3rd column of the device→earth rotation matrix). This works with the phone in landscape or crooked in the headset (raw `alpha` would follow the phone's top edge). The direction vector is smoothed (not the angle, so 359°→0° doesn't jump). Verified numerically: quaternion and Euler paths agree.
+- **FOV:** estimated from the preset's main-camera FOV ÷ hardware zoom × `object-fit: cover` crop, times a calibrated `fovScale`.
+- **Plane data:** the fixture is imported directly from `shared/fixtures/` (Vite `server.fs.allow: ['..']`). The live feed polls `/api/flights/nearby` every 2 s with `fovDeg=360` and does the cone filter per frame from `bearingDeg` + live heading. On errors it keeps the last good data.
+- **In-headset calibration** (saved in localStorage) is **locked by default** so stray touches do nothing. **Double-tap the middle** to unlock, then middle tap cycles **zoom → tilt → spacing → shift → size → fov → info → locked**, left/right taps adjust. It re-locks after 6 s idle (except on info). **Tilt** matters most in practice: the phone never sits perfectly level in the headset, and a crooked phone puts one eye's image higher than the other (double crosshair). Tilt rotates the whole two-eye layout to compensate.
 - **HUD rule:** anything drawn on the overlay must be drawn identically in **both** eyes, or it won't fuse (text shown to one eye only flickers and is hard to read).
-- **Exiting:** the Android back gesture leaves fullscreen and returns to the start screen.
+- **Exiting:** **long-press (1.5 s)** returns to the start screen. Leaving fullscreen (often an accidental back-swipe from the headset edge) does *not* exit the view: a "tap to resume" hint appears and the next tap re-enters fullscreen. The back gesture is swallowed while in the view.
 
 ## Voice service notes
 

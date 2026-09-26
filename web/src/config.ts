@@ -5,6 +5,11 @@ export type DevicePreset = {
   label: string;
   /** Physical length of the screen's long edge (landscape width), in mm. */
   screenWidthMm: number;
+  /**
+   * tan(half horizontal FOV) of the main rear camera at 1x zoom, 4:3 stream.
+   * From diagonal FOV d: tan(d/2) * 0.8 (4:3 width share of the diagonal). Refine with the fov calibration.
+   */
+  cameraHalfTan1x: number;
   /** Matched against the device model (userAgentData) or the user agent string. */
   match?: RegExp;
 };
@@ -14,10 +19,11 @@ export type DevicePreset = {
 //   Galaxy S22+:    6.6", 1080x2340 -> ~152 mm
 //   iPhone 13 mini: 5.4", 1080x2340 -> ~125 mm
 export const PRESETS: DevicePreset[] = [
-  { id: 'pixel10', label: 'Pixel 10', screenWidthMm: 146, match: /Pixel 10/i },
-  { id: 's22plus', label: 'Galaxy S22+', screenWidthMm: 152, match: /SM-S906/i },
-  { id: 'iphone13mini', label: 'iPhone 13 mini', screenWidthMm: 125, match: /iPhone/i },
-  { id: 'generic', label: 'Other (~6.3" phone)', screenWidthMm: 146 },
+  // Main camera diagonal FOV: Pixel ~82°, S22+ ~85°, iPhone 13 mini ~84°.
+  { id: 'pixel10', label: 'Pixel 10', screenWidthMm: 146, cameraHalfTan1x: 0.7, match: /Pixel 10/i },
+  { id: 's22plus', label: 'Galaxy S22+', screenWidthMm: 152, cameraHalfTan1x: 0.73, match: /SM-S906/i },
+  { id: 'iphone13mini', label: 'iPhone 13 mini', screenWidthMm: 125, cameraHalfTan1x: 0.72, match: /iPhone/i },
+  { id: 'generic', label: 'Other (~6.3" phone)', screenWidthMm: 146, cameraHalfTan1x: 0.7 },
 ];
 
 /** Typical Cardboard lens center-to-center distance. */
@@ -32,6 +38,8 @@ export type Settings = {
   viewScale: number;
   /** Rotation compensating for a phone sitting crooked in the headset (+ = clockwise). */
   tiltDeg: number;
+  /** Multiplier on the estimated camera FOV, tuned until labels line up with the real scene. */
+  fovScale: number;
   /** Hardware camera zoom; null = widest available (ultrawide on most phones). */
   cameraZoom: number | null;
   /** '' = auto (rear-facing). */
@@ -44,6 +52,7 @@ export const DEFAULT_SETTINGS: Settings = {
   offsetMm: 0,
   viewScale: 0.95,
   tiltDeg: 0,
+  fovScale: 1,
   cameraZoom: null,
   cameraId: '',
 };

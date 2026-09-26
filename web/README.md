@@ -26,7 +26,7 @@ That needs CSS px per mm, which comes from a per-phone preset in `src/config.ts`
 
 ## In-headset calibration
 
-Tap the **middle** of the screen to cycle settings, **left/right** to adjust. Saved per browser.
+Calibration is locked by default. **Double-tap the middle** to unlock; then tap the **middle** to cycle settings, **left/right** to adjust. Re-locks after 6 s idle. Saved per browser. **Long-press** returns to the start screen.
 
 | Setting | What it fixes |
 |---|---|
@@ -35,4 +35,5 @@ Tap the **middle** of the screen to cycle settings, **left/right** to adjust. Sa
 | spacing | Lens center distance (default 64 mm). Crosshairs side by side → adjust. |
 | shift | Phone off-center horizontally in the headset. |
 | size | Shrinks the image if the edges look warped. |
+| fov | Field of view used to place planes. Tune until diamonds line up with real objects as you turn. |
 | info | Shows all current values. |

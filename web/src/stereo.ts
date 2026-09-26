@@ -4,6 +4,9 @@
 export type Eye = {
   root: HTMLDivElement;
   video: HTMLVideoElement;
+  /** Per-frame HUD (plane labels, compass). Drawn in CSS px; DPR scaling is handled in layout. */
+  ctx: CanvasRenderingContext2D;
+  /** DOM overlay for occasional UI (crosshair, toasts, errors). */
   overlay: HTMLDivElement;
 };
 
@@ -27,7 +30,7 @@ export type StereoView = {
   eyeSize: () => { width: number; height: number };
 };
 
-function makeEye(stream: MediaStream): Eye {
+function makeEye(stream: MediaStream | null): Eye {
   const root = document.createElement('div');
   root.className = 'eye';
 
@@ -36,16 +39,20 @@ function makeEye(stream: MediaStream): Eye {
   video.muted = true;
   video.playsInline = true;
   video.srcObject = stream;
-  video.play().catch(() => {});
+  if (stream) video.play().catch(() => {});
+
+  const canvas = document.createElement('canvas');
+  canvas.className = 'eye-hud';
 
   const overlay = document.createElement('div');
   overlay.className = 'eye-overlay';
 
-  root.append(video, overlay);
-  return { root, video, overlay };
+  root.append(video, canvas, overlay);
+  return { root, video, ctx: canvas.getContext('2d')!, overlay };
 }
 
-export function createStereoView(container: HTMLElement, stream: MediaStream): StereoView {
+/** `stream` may be null (desktop dev mode without a camera). */
+export function createStereoView(container: HTMLElement, stream: MediaStream | null): StereoView {
   const eyes: [Eye, Eye] = [makeEye(stream), makeEye(stream)];
   container.replaceChildren(eyes[0].root, eyes[1].root);
 
@@ -78,6 +85,10 @@ export function createStereoView(container: HTMLElement, stream: MediaStream): S
         height: `${eyeH}px`,
         transform: tiltDeg ? `rotate(${tiltDeg}deg)` : '',
       });
+      const dpr = window.devicePixelRatio || 1;
+      eye.ctx.canvas.width = Math.round(eyeW * dpr);
+      eye.ctx.canvas.height = Math.round(eyeH * dpr);
+      eye.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     });
     size = { width: eyeW, height: eyeH };
   }
