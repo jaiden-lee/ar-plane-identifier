@@ -54,6 +54,13 @@ class Plane(BaseModel):
     trackDeg: Optional[float] = None
     distanceKm: Optional[float] = None
     bearingDeg: Optional[float] = None
+    offsetDeg: Optional[float] = None  # signed angle from where the user is facing; negative = left
+    category: Optional[str] = None  # raw ADS-B emitter category, e.g. "A7" = rotorcraft
+    kind: Optional[str] = None  # "plane" | "helicopter"
+    onGround: Optional[bool] = None
+    emergency: Optional[str] = None  # "general" | "minfuel" | "nordo" | "unlawful" | "downed"
+    military: Optional[bool] = None
+    medical: Optional[bool] = None
 
 
 class AskRequest(BaseModel):
@@ -76,7 +83,7 @@ class AskResponse(BaseModel):
 
 def _load_fixture_planes() -> list[dict[str, Any]]:
     try:
-        return json.loads(FIXTURE_PATH.read_text()).get("planes", [])
+        return json.loads(FIXTURE_PATH.read_text(encoding="utf-8")).get("planes", [])
     except Exception as e:  # noqa: BLE001
         log.warning("could not read fixture %s: %s", FIXTURE_PATH, e)
         return []
@@ -107,6 +114,22 @@ If a field is missing, say you don't know that detail (briefly) and move on.
 (e.g. how many seats an A321 has, how fast a 737 cruises, what an airline is).
 - Say airport codes as their city or airport name when you know it (ATL -> Atlanta, LGA -> LaGuardia).
 - Be fun and a little punchy, but accurate. Never lecture.
+
+Context for reasoning about what a plane is doing:
+- The user is standing on the Georgia Tech campus in Atlanta, about 15 km north of \
+Hartsfield-Jackson airport (ATL). Nearly every airliner they see is arriving at or \
+departing from ATL.
+- Flight phase: a plane whose destination is ATL and altitude is under ~10,000 ft is \
+descending to land. A plane whose origin is ATL at low altitude is climbing out. \
+"On the ground" means it is taxiing or parked at ATL, not flying. Don't say a plane \
+is "climbing" or "just took off" unless the origin is ATL or the route is unknown \
+and the altitude is low; when unsure, don't guess the phase at all.
+- "Kind: helicopter" means it is a helicopter even when the type is unknown; call it \
+a helicopter, never a plane. Medical helicopters are typically air ambulances.
+- Mention emergency, military, or medical flags when set; they are interesting. \
+Skip them when not set.
+- "Position in view" tells you where the aircraft is relative to the way the user is \
+facing; use it only if it helps ("just to your left").
 """
 
 
@@ -118,13 +141,28 @@ def _fmt(v: Any, unit: str = "") -> str:
     return f"{v}{unit}"
 
 
-def describe_plane(p: Plane, label: str = "Plane the user is looking at") -> str:
+def _position_in_view(offset: Optional[float]) -> str:
+    if offset is None:
+        return "unknown"
+    if abs(offset) < 5:
+        return "straight ahead"
+    side = "left" if offset < 0 else "right"
+    return f"{abs(offset):.0f} degrees to the {side}"
+
+
+def describe_plane(p: Plane, label: str = "Aircraft the user is looking at") -> str:
+    flags = [name for name, on in (("EMERGENCY: " + str(p.emergency), bool(p.emergency)),
+                                    ("military", bool(p.military)),
+                                    ("medical / air ambulance", bool(p.medical))) if on]
     lines = [
         f"{label}:",
+        f"  Kind: {_fmt(p.kind)}",
         f"  ICAO hex id: {p.id}",
         f"  Callsign / flight: {_fmt(p.callsign)}",
         f"  Registration (tail number): {_fmt(p.registration)}",
         f"  Aircraft: {_fmt(p.typeName)} (type code {_fmt(p.typeCode)})",
+        f"  On the ground: {'yes' if p.onGround else 'no' if p.onGround is not None else 'unknown'}",
+        f"  Special flags: {', '.join(flags) if flags else 'none'}",
         f"  Airline: {_fmt(p.airline)}",
         f"  Route: {_fmt(p.origin)} -> {_fmt(p.destination)}",
         f"  Altitude: {_fmt(p.altitudeFt, ' ft')}",
@@ -132,6 +170,7 @@ def describe_plane(p: Plane, label: str = "Plane the user is looking at") -> str
         f"  Heading (track): {_fmt(p.trackDeg, ' degrees')}",
         f"  Distance from user: {_fmt(p.distanceKm, ' km')}",
         f"  Bearing from user: {_fmt(p.bearingDeg, ' degrees')}",
+        f"  Position in view: {_position_in_view(p.offsetDeg)}",
     ]
     return "\n".join(lines)
 
@@ -149,7 +188,7 @@ def build_messages(req: AskRequest, plane: Optional[Plane]) -> list[dict[str, st
         others = [p for p in req.nearbyPlanes if not plane or p.id != plane.id]
         if others:
             context += "\n\nOther planes nearby (not centered):\n" + "\n".join(
-                f"  - {_fmt(p.callsign)} ({_fmt(p.typeName)}), "
+                f"  - {_fmt(p.callsign)} ({p.typeName or p.typeCode or p.kind or 'unknown type'}), "
                 f"{_fmt(p.distanceKm, ' km')} away, bearing {_fmt(p.bearingDeg)}"
                 for p in others[:8]
             )
@@ -169,14 +208,18 @@ def fallback_answer(req: AskRequest, plane: Optional[Plane]) -> str:
     if plane is None:
         return "I don't see a plane right now. Try looking around the sky."
     who = plane.callsign or plane.registration or "an aircraft"
-    what = plane.typeName or plane.typeCode or "an unknown type"
+    what = plane.typeName or plane.typeCode or ("helicopter" if plane.kind == "helicopter" else "unknown type")
+    if plane.medical:
+        what = f"medical {what}"
     bits = [f"That's {who}, {('a ' if what[0].lower() not in 'aeiou' else 'an ') + what}"]
     if plane.airline:
         bits[0] += f" operated by {plane.airline}"
     bits[0] += "."
     if plane.origin or plane.destination:
         bits.append(f"It's flying from {plane.origin or 'somewhere'} to {plane.destination or 'somewhere'}.")
-    if plane.altitudeFt is not None:
+    if plane.onGround:
+        bits.append("It's on the ground right now.")
+    elif plane.altitudeFt is not None:
         bits.append(f"It's at about {int(plane.altitudeFt):,} feet.")
     return " ".join(bits)
 

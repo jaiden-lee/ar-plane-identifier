@@ -11,7 +11,7 @@ and `web/src/voice/` only; do not edit other paths.
 | 1 | `POST /api/voice/ask` with plane context, curl-testable | ✅ Done, verified live |
 | 2 | Browser module `web/src/voice/` (wake phrase, STT, TTS) | 🟡 Built + tested with fake mic; needs a real-phone test |
 | 3 | Head-tilt fallback trigger | 🟡 `voice.listen()` hook exists; tilt detection not wired |
-| 4 | Prompt tuning for short, fun, accurate spoken answers | 🟡 First pass done |
+| 4 | Prompt tuning for short, fun, accurate spoken answers | 🟡 Flight phase + helicopters fixed; tune tone on the phone |
 
 ## Decisions
 
@@ -50,17 +50,22 @@ Run and curl instructions are in `README.md`. The key lives in `.env` (gitignore
 
 ## Known gaps / TODO
 
-- Root `CLAUDE.md` still says Grok and "xAI API key lives only in voice-service". Propose
-  changing it to Gemini (everyone-owned file, needs team OK).
-- `Plane.offsetDeg` (new optional contract field, signed angle off-center) is accepted but
-  dropped by the Pydantic model. Add it and use it for a spoken "slightly to your left".
-- Fixture read in `main.py` uses default encoding; root rule says pass `encoding="utf-8"`
-  (Windows teammate got bitten). Fix before Wesley's real snapshot lands.
-- Prompt: the model guesses flight phase (said a plane at 4,200 ft on final into ATL was
-  "cleaning up the gear"). Either teach it climb vs descend from route + altitude, or
-  tell it not to speculate about flight phase.
-- Free-tier tail latency: one request in five stalled to ~9 s (timeout + retry). If that
-  shows up in the demo, drop the timeout to ~5 s so the fallback fires sooner.
+- Free-tier tail latency (Gemini): one request in five stalled to ~9 s (timeout + retry).
+  Not seen on Grok. If it shows up in the demo, drop the timeout to ~5 s.
+- Head-tilt trigger: `voice.listen()` exists; roll detection is not wired to it.
+- Grok with `XAI_REASONING_EFFORT=none` is terse. If answers feel thin on stage, ask the
+  prompt for one extra detail (type or altitude) or try `low`.
+
+## Fixed 2026-09-26
+
+- Plane model now carries the full contract: `offsetDeg`, `category`, `kind`, `onGround`,
+  `emergency`, `military`, `medical`. `describe_plane()` renders kind, ground state, flags,
+  and position in view. A medical helicopter with no type is now "a medical helicopter".
+- Prompt knows the user is at Georgia Tech near ATL and reasons about flight phase:
+  destination ATL + low altitude = landing; origin ATL = climbing; on ground = at the gate.
+  Verified on six fixture cases through Grok.
+- Fixture read passes `encoding="utf-8"` (team rule).
+- Fallback answer handles helicopters and on-ground aircraft.
 
 ## Browser module (`web/src/voice/`)
 
