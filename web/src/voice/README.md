@@ -23,7 +23,12 @@ voice.listen();   // optional: enter "listening" without the wake phrase (head-t
 voice.stop();     // on exit
 ```
 
-The user says **"hey grok, &lt;question&gt;"** (or "hey grok", pause, question). Fuzzy matching
+The user says **"hey grok, &lt;question&gt;"** (or "hey grok", pause, question). The question is
+sent once the user has been **quiet for 1.3 s** (`endOfQuestionSilenceMs`), not on Chrome's first
+"final" result: Chrome finalizes at any short pause, which used to cut people off mid-sentence.
+All phrases after the wake word are joined; interim results count as speech and push the deadline
+back. Caps: 8 s to start talking after "hey grok" (`questionTimeoutMs`), 15 s total
+(`maxQuestionMs`). Fuzzy matching
 covers "grock", "rock", "croc", "a grok", etc. The answer is spoken with `speechSynthesis`
 and passed to `onAnswer` for the HUD. While the phone is speaking, the mic is paused so it
 doesn't hear itself. If the voice service is down, the module speaks a short offline line

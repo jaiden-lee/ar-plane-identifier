@@ -24,11 +24,23 @@ export function startVoice(opts: StartVoiceOptions): VoiceHandle {
   const questionTimeoutMs = opts.questionTimeoutMs ?? 8000;
   const shouldSpeak = opts.speak ?? true;
 
+  const silenceMs = opts.endOfQuestionSilenceMs ?? 1300;
+  const maxQuestionMs = opts.maxQuestionMs ?? 15000;
+
   let state: VoiceState = 'idle';
   let stopped = false;
-  let awaitingQuestion = false;
-  let questionTimer = 0;
   let recognizer: Recognizer | null = null;
+
+  // Question capture. Chrome marks a phrase "final" at any short pause, so asking on the first
+  // final result cut people off mid-sentence. Instead, after the wake phrase we collect every
+  // phrase (final + the current interim one) and only ask once the user has been quiet for
+  // `silenceMs`. Any new speech, interim included, pushes that deadline back.
+  let capturing = false;
+  let committed: string[] = [];
+  let interim = '';
+  let questionTimer = 0; // nothing said yet after the wake phrase -> give up after questionTimeoutMs
+  let silenceTimer = 0; // user went quiet -> ask
+  let maxTimer = 0; // hard cap on one question's length
 
   function setState(s: VoiceState) {
     if (state === s) return;
@@ -41,46 +53,74 @@ export function startVoice(opts: StartVoiceOptions): VoiceHandle {
   function onResult(text: string, isFinal: boolean) {
     if (stopped || state === 'thinking' || state === 'speaking') return;
 
-    const afterWake = matchWake(text);
-
-    if (!isFinal) {
-      // Early feedback: flip to "listening" as soon as the wake phrase shows up.
-      if (afterWake !== null && state === 'idle') setState('listening');
-      return;
+    if (!capturing) {
+      const afterWake = matchWake(text);
+      if (afterWake === null) return;
+      // Wake phrase heard (interim is enough, for fast feedback). Start collecting the question.
+      beginCapture();
     }
 
-    if (afterWake !== null) {
-      if (afterWake) {
-        void ask(afterWake);
-      } else {
-        // "hey grok" ... (pause) ... question comes in the next result.
-        armQuestionWindow();
-      }
-      return;
+    // The phrase containing the wake word keeps arriving with "hey grok" at the front; strip it.
+    const phrase = (matchWake(text) ?? text).trim();
+    if (isFinal) {
+      if (phrase) committed.push(phrase);
+      interim = '';
+    } else {
+      interim = phrase;
     }
-
-    if (awaitingQuestion) {
-      const q = text.trim();
-      if (q) void ask(q);
+    if (currentQuestion()) {
+      // They've started talking: the "nothing said" timeout no longer applies.
+      clearTimeout(questionTimer);
+      clearTimeout(silenceTimer);
+      silenceTimer = window.setTimeout(finishCapture, silenceMs);
     }
   }
 
-  function armQuestionWindow() {
-    awaitingQuestion = true;
+  function currentQuestion(): string {
+    return [...committed, interim].join(' ').replace(/\s+/g, ' ').trim();
+  }
+
+  function beginCapture() {
+    capturing = true;
+    committed = [];
+    interim = '';
     setState('listening');
     clearTimeout(questionTimer);
+    clearTimeout(silenceTimer);
+    clearTimeout(maxTimer);
+    // "hey grok" and then nothing: give up quietly.
     questionTimer = window.setTimeout(() => {
-      awaitingQuestion = false;
-      if (state === 'listening') setState('idle');
+      if (!currentQuestion()) {
+        endCapture();
+        if (state === 'listening') setState('idle');
+      }
     }, questionTimeoutMs);
+    // Someone rambling (or background chatter): ask with what we have.
+    maxTimer = window.setTimeout(finishCapture, maxQuestionMs);
+  }
+
+  function endCapture() {
+    capturing = false;
+    committed = [];
+    interim = '';
+    clearTimeout(questionTimer);
+    clearTimeout(silenceTimer);
+    clearTimeout(maxTimer);
+  }
+
+  function finishCapture() {
+    if (!capturing) return;
+    const q = currentQuestion();
+    endCapture();
+    if (q) void ask(q);
+    else if (state === 'listening') setState('idle');
   }
 
   // ---- Ask the service and speak the answer --------------------------------
 
   async function ask(question: string): Promise<void> {
     if (stopped) return;
-    awaitingQuestion = false;
-    clearTimeout(questionTimer);
+    endCapture();
     opts.onTranscript?.(question);
     setState('thinking');
 
@@ -145,14 +185,14 @@ export function startVoice(opts: StartVoiceOptions): VoiceHandle {
   return {
     stop() {
       stopped = true;
-      clearTimeout(questionTimer);
+      endCapture();
       recognizer?.stop();
       stopSpeaking();
       setState('idle');
     },
     ask,
     listen() {
-      if (!stopped && state === 'idle') armQuestionWindow();
+      if (!stopped && state === 'idle') beginCapture();
     },
     getState: () => state,
   };

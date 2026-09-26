@@ -42,6 +42,10 @@ export type StartVoiceOptions = {
   lang?: string;
   /** After "hey grok" with no question, how long to wait for one. Default 8000. */
   questionTimeoutMs?: number;
+  /** The question is sent once the user has been quiet this long (ms). Default 1300. */
+  endOfQuestionSilenceMs?: number;
+  /** Hard cap on how long one question can run before it's sent anyway (ms). Default 15000. */
+  maxQuestionMs?: number;
   /** Read answers aloud with speechSynthesis. Default true. */
   speak?: boolean;
   /** Override the recognizer (used by the dev page to fake transcripts). */
