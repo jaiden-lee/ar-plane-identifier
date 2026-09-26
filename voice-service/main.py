@@ -24,8 +24,12 @@ log = logging.getLogger("voice-service")
 logging.basicConfig(level=logging.INFO)
 
 XAI_API_KEY = os.getenv("XAI_API_KEY", "")
-XAI_MODEL = os.getenv("XAI_MODEL", "grok-4-fast")
+# grok-4-fast was retired by xAI on 2026-05-15; grok-4.3 is its replacement.
+XAI_MODEL = os.getenv("XAI_MODEL", "grok-4.3")
 XAI_BASE_URL = os.getenv("XAI_BASE_URL", "https://api.x.ai/v1")
+# Optional: "none" | "low" | "medium" | "high". grok-4.3 defaults to "low"; "none" answers fastest.
+# Leave unset for providers that don't support it (e.g. Gemini).
+XAI_REASONING_EFFORT = os.getenv("XAI_REASONING_EFFORT", "").strip()
 FIXTURE_PATH = Path(__file__).parent.parent / "shared" / "fixtures" / "demo-planes.json"
 
 # ---------------------------------------------------------------------------
@@ -188,6 +192,8 @@ async def ask_grok(messages: list[dict[str, str]]) -> str:
         messages=messages,
         max_tokens=512,  # thinking models count reasoning tokens against this; 200 truncated answers
         temperature=0.7,
+        # Sent as a raw body field so the SDK doesn't validate the value against OpenAI's list.
+        extra_body={"reasoning_effort": XAI_REASONING_EFFORT} if XAI_REASONING_EFFORT else None,
     )
     text = (resp.choices[0].message.content or "").strip()
     # Belt and braces: strip any markdown-ish characters that would be read aloud.
@@ -203,7 +209,7 @@ app = FastAPI(title="voice-service")
 
 @app.get("/api/voice/health")
 async def health() -> dict[str, Any]:
-    return {"ok": True, "model": XAI_MODEL, "hasKey": bool(XAI_API_KEY)}
+    return {"ok": True, "model": XAI_MODEL, "reasoningEffort": XAI_REASONING_EFFORT or None, "hasKey": bool(XAI_API_KEY)}
 
 
 @app.post("/api/voice/ask", response_model=AskResponse)
