@@ -28,6 +28,44 @@ const AIRLINE_IATA: Record<string, string> = {
   ACA: 'AC',
 };
 
+export type AircraftStatus = 'emergency' | 'ground' | 'medical' | 'military' | 'normal';
+
+/**
+ * One status per aircraft for coloring, most important first:
+ * emergency (blinking red) > on ground (grey) > medical (purple) > military (green) > normal (blue).
+ */
+export function aircraftStatus(p: Plane): AircraftStatus {
+  if (p.emergency) return 'emergency';
+  if (p.onGround) return 'ground';
+  if (p.medical) return 'medical';
+  if (p.military) return 'military';
+  return 'normal';
+}
+
+const EMERGENCY_LABELS: Record<string, string> = {
+  general: 'Emergency',
+  minfuel: 'Emergency · minimum fuel',
+  nordo: 'Emergency · radio failure',
+  unlawful: 'Emergency · hijack',
+  downed: 'Emergency · aircraft down',
+};
+
+/** Tag line shown above the card title for non-normal aircraft, e.g. "MEDICAL". */
+export function statusTag(p: Plane): string | null {
+  switch (aircraftStatus(p)) {
+    case 'emergency':
+      return (EMERGENCY_LABELS[p.emergency ?? ''] ?? `Emergency · ${p.emergency}`).toUpperCase();
+    case 'ground':
+      return 'ON THE GROUND';
+    case 'medical':
+      return 'MEDICAL';
+    case 'military':
+      return 'MILITARY';
+    case 'normal':
+      return null;
+  }
+}
+
 /** Short identifier: "DL 1234", else raw callsign, else registration, else hex id. */
 export function flightLabel(p: Plane): string {
   const cs = p.callsign?.trim();
@@ -47,7 +85,8 @@ export function flightLabel(p: Plane): string {
 export function cardLines(p: Plane): string[] {
   const title = [flightLabel(p), p.airline].filter(Boolean).join(' · ');
   const route = p.origin || p.destination ? `${p.origin ?? '?'} → ${p.destination ?? '?'}` : null;
-  const type = [p.typeName ?? p.typeCode ?? 'Unknown aircraft', route].filter(Boolean).join(' · ');
+  const fallback = p.kind === 'helicopter' ? 'Helicopter' : 'Unknown aircraft';
+  const type = [p.typeName ?? p.typeCode ?? fallback, route].filter(Boolean).join(' · ');
   const stats = [
     p.altitudeFt != null ? `${Math.round(p.altitudeFt).toLocaleString('en-US')} ft` : null,
     p.groundSpeedKt != null ? `${Math.round(p.groundSpeedKt)} kt` : null,

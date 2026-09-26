@@ -1,6 +1,19 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 
+const SHARED_DIR = fileURLToPath(new URL('../shared', import.meta.url));
+
 export default defineConfig({
+  plugins: [
+    {
+      // ../shared is outside the web root, so Vite doesn't watch it by default and keeps serving
+      // a stale copy of the fixture after it's regenerated. Watch it explicitly.
+      name: 'watch-shared',
+      configureServer(server) {
+        server.watcher.add(SHARED_DIR);
+      },
+    },
+  ],
   server: {
     host: true,
     port: 5173,

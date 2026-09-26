@@ -2,14 +2,15 @@
 // always show identical content (required for the two images to fuse in the headset).
 //
 // Everything hangs off one "headband" compass bar near the top of the view:
-//   on the bar:    a diamond per plane at its bearing, center mark
+//   on the bar:    a plane or helicopter icon per aircraft at its bearing, center mark
 //   below the bar: degree ticks/labels, current heading
 //   right under that: info card for the focused plane, attached to the compass
 //                  (drops down like a notification)
 // Voice ("hey grok") status and answers show as subtitles near the bottom.
 // The middle of the view stays clear.
 
-import { cardLines, flightLabel } from './format';
+import { aircraftStatus, cardLines, flightLabel, statusTag } from './format';
+import type { AircraftStatus } from './format';
 import { halfFovDeg, normalizeDeg, projectX, signedDiffDeg } from './geo';
 import type { Plane } from './planes';
 import type { VoiceState } from './voice';
@@ -51,6 +52,17 @@ const COLORS = {
   panel: 'rgba(0, 0, 0, 0.62)',
   shadow: 'rgba(0, 0, 0, 0.8)',
 };
+
+/** Icon/accent color per aircraft status (normal planes use the HUD blue, focus adds yellow). */
+const STATUS_COLORS: Record<AircraftStatus, string> = {
+  emergency: '#ff3b30',
+  ground: '#9e9e9e',
+  medical: '#c77dff',
+  military: '#4cd964',
+  normal: COLORS.hud,
+};
+/** Emergency blink: on/off period in ms. */
+const BLINK_MS = 400;
 
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
 
@@ -117,7 +129,9 @@ function drawPlanes(ctx: CanvasRenderingContext2D, w: number, h: number, s: HudS
 
   const closest = onBar.reduce((a, b) => (Math.abs(b.off) < Math.abs(a.off) ? b : a));
   const focus = Math.abs(closest.off) <= FOCUS_HALF_DEG ? closest : null;
-  for (const m of onBar) if (m !== focus) drawDiamond(ctx, m.x, barY, false);
+  // Far to near, so closer aircraft draw on top.
+  const byDistance = [...onBar].sort((a, b) => b.p.distanceKm - a.p.distanceKm);
+  for (const m of byDistance) if (m !== focus) drawAircraft(ctx, m.x, barY, m.p, false, s.timeMs);
   const inView = onBar.map((m) => ({ ...m.p, offsetDeg: m.off }));
 
   if (!focus) {
@@ -126,8 +140,10 @@ function drawPlanes(ctx: CanvasRenderingContext2D, w: number, h: number, s: HudS
   }
   if (focusAnim?.id !== focus.p.id) focusAnim = { id: focus.p.id, since: s.timeMs };
   const t = Math.min(1, (s.timeMs - focusAnim.since) / CARD_ANIM_MS);
-  drawDiamond(ctx, focus.x, barY, true);
-  drawCard(ctx, w, focus.x, barY, cardLines(focus.p), t);
+  drawAircraft(ctx, focus.x, barY, focus.p, true, s.timeMs);
+  const status = aircraftStatus(focus.p);
+  const accent = status === 'normal' ? COLORS.focus : STATUS_COLORS[status];
+  drawCard(ctx, w, focus.x, barY, cardLines(focus.p), t, accent, statusTag(focus.p));
   return { focus: { ...focus.p, offsetDeg: focus.off }, inView };
 }
 
@@ -255,7 +271,7 @@ function drawCompass(
     // Skip labels that would collide with the heading readout in the middle.
     if (major && Math.abs(x - w / 2) > headingBoxHalfW + fs(8)) {
       const name = ({ 0: 'N', 90: 'E', 180: 'S', 270: 'W' } as Record<number, string>)[deg] ?? String(deg);
-      label(ctx, x, labelY, name, fs(name.length === 1 ? 12 : 10), COLORS.hud, 'center', true);
+      label(ctx, x, labelY, name, fs(name.length === 1 ? 12 : 10), COLORS.text, 'center', true);
     }
   }
 
@@ -270,34 +286,94 @@ function drawCompass(
   ctx.restore();
 }
 
-function drawDiamond(ctx: CanvasRenderingContext2D, x: number, y: number, focus: boolean) {
-  const r = focus ? 7 : 5;
+// Icons in a 24x24 box centered on (12, 12).
+// Plane: top-down silhouette pointing up (Material "flight" icon).
+const PLANE_PATH = new Path2D(
+  'M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z',
+);
+// Helicopter: side view facing right (rotor, cabin, tail boom and fin, skids).
+const HELI_PATH = (() => {
+  const p = new Path2D();
+  p.ellipse(14.5, 12.5, 5, 3.6, 0, 0, Math.PI * 2); // cabin
+  p.rect(2.5, 11.2, 9, 1.8); // tail boom
+  p.rect(1.5, 8.2, 2, 5.5); // tail fin / rotor
+  p.rect(13.7, 6.8, 1.6, 2.6); // mast
+  p.rect(4, 5.6, 19, 1.5); // main rotor
+  p.rect(11.2, 15.5, 1.2, 3); // skid struts
+  p.rect(16.8, 15.5, 1.2, 3);
+  p.rect(9, 18, 11.5, 1.4); // skid
+  return p;
+})();
+
+/**
+ * Aircraft marker on the compass bar. Oriented by its direction of travel relative to your line
+ * of sight: the plane icon points up when flying away, sideways when crossing your view, down when
+ * coming toward you; the helicopter faces left or right. Colored by status (see STATUS_COLORS);
+ * the focused aircraft is larger, and yellow if it has no special status (otherwise yellow outline).
+ */
+/** Icon size shrinks with distance (depth cue, less clutter): 15px up close down to 10px at 40 km. */
+const ICON_NEAR_PX = 15;
+const ICON_FAR_PX = 10;
+const ICON_FAR_KM = 40;
+
+function drawAircraft(ctx: CanvasRenderingContext2D, x: number, y: number, p: Plane, focus: boolean, timeMs: number) {
+  const status = aircraftStatus(p);
+  // Emergencies blink so they're impossible to miss.
+  const blinkOff = status === 'emergency' && Math.floor(timeMs / BLINK_MS) % 2 === 1;
+  const far = Math.min(1, p.distanceKm / ICON_FAR_KM);
+  const size = focus ? 19 : ICON_NEAR_PX - (ICON_NEAR_PX - ICON_FAR_PX) * far;
+  const heli = p.kind === 'helicopter';
+  // 0 = flying directly away from the viewer, + = moving to the viewer's right.
+  const rel = p.trackDeg == null ? 0 : signedDiffDeg(p.trackDeg, p.bearingDeg);
+  const s = size / 24;
+
   ctx.save();
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = focus ? COLORS.focus : COLORS.hud;
-  ctx.fillStyle = focus ? 'rgba(255, 201, 77, 0.35)' : 'rgba(0, 0, 0, 0.45)';
+  ctx.translate(x, y);
+  if (heli) {
+    ctx.scale(rel < 0 ? -s : s, s);
+  } else {
+    ctx.rotate((rel * Math.PI) / 180);
+    ctx.scale(s, s);
+  }
+  ctx.translate(-12, -12);
   ctx.shadowColor = COLORS.shadow;
   ctx.shadowBlur = 4;
-  ctx.beginPath();
-  ctx.moveTo(x, y - r);
-  ctx.lineTo(x + r, y);
-  ctx.lineTo(x, y + r);
-  ctx.lineTo(x - r, y);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
+  ctx.lineJoin = 'round';
+  if (blinkOff) ctx.globalAlpha = 0.25;
+  const path = heli ? HELI_PATH : PLANE_PATH;
+  // Outline: yellow marks the focused aircraft when its fill is a status color.
+  const focusOutline = focus && status !== 'normal';
+  ctx.lineWidth = (focusOutline ? 3.2 : 2.2) / s;
+  ctx.strokeStyle = focusOutline ? COLORS.focus : 'rgba(0, 0, 0, 0.7)';
+  ctx.stroke(path);
+  ctx.fillStyle = focus && status === 'normal' ? COLORS.focus : STATUS_COLORS[status];
+  ctx.fill(path);
   ctx.restore();
 }
 
 /** Row below the bar holding the degree labels and heading readout. */
-const labelRowY = (barY: number) => barY + fs(15);
+const labelRowY = (barY: number) => barY + fs(18);
 
-/** Info card attached right under the compass, dropping down from it. `t` is animation progress 0..1. */
-function drawCard(ctx: CanvasRenderingContext2D, w: number, mx: number, barY: number, lines: string[], t: number) {
+/**
+ * Info card attached right under the compass, dropping down from it. `t` is animation progress 0..1.
+ * `accent` colors the side bar and notch; `tag` (e.g. "MEDICAL") is an optional line above the title.
+ */
+function drawCard(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  mx: number,
+  barY: number,
+  lines: string[],
+  t: number,
+  accent: string,
+  tag: string | null,
+) {
   const pad = 6;
   const titleSize = fs(15);
   const bodySize = fs(13);
+  const tagSize = fs(10);
   const lineGap = 3;
+  const tagH = tag ? tagSize + lineGap : 0;
   const ease = 1 - (1 - t) * (1 - t);
 
   ctx.save();
@@ -306,27 +382,36 @@ function drawCard(ctx: CanvasRenderingContext2D, w: number, mx: number, barY: nu
     ctx.font = `${i === 0 ? 700 : 500} ${i === 0 ? titleSize : bodySize}px ${FONT}`;
     return ctx.measureText(l).width;
   });
+  if (tag) {
+    ctx.font = `800 ${tagSize}px ${FONT}`;
+    widths.push(ctx.measureText(tag).width);
+  }
   const cardW = Math.min(w - 12, Math.max(...widths) + pad * 2 + 4);
-  const cardH = pad * 2 + titleSize + (lines.length - 1) * (bodySize + lineGap);
+  const cardH = pad * 2 + tagH + titleSize + (lines.length - 1) * (bodySize + lineGap);
   const x = Math.max(6, Math.min(w - cardW - 6, mx - cardW / 2));
   const y = labelRowY(barY) + fs(10) - (1 - ease) * 8;
 
   ctx.fillStyle = COLORS.panel;
   roundRect(ctx, x, y, cardW, cardH, 6);
   ctx.fill();
-  // Notch on the card's top edge pointing up at the plane's diamond.
+  // Notch on the card's top edge pointing up at the aircraft icon.
   const nx = Math.max(x + 8, Math.min(x + cardW - 8, mx));
-  ctx.fillStyle = COLORS.focus;
+  ctx.fillStyle = accent;
   ctx.beginPath();
   ctx.moveTo(nx, y - 5);
   ctx.lineTo(nx - 5, y);
   ctx.lineTo(nx + 5, y);
   ctx.closePath();
   ctx.fill();
-  ctx.fillStyle = COLORS.focus;
   ctx.fillRect(x, y + 5, 3, cardH - 10);
 
-  let ty = y + pad + titleSize / 2;
+  if (tag) {
+    ctx.font = `800 ${tagSize}px ${FONT}`;
+    ctx.fillStyle = accent;
+    ctx.textAlign = 'left';
+    ctx.fillText(tag, x + pad + 4, y + pad + tagSize / 2, cardW - pad * 2 - 4);
+  }
+  let ty = y + pad + tagH + titleSize / 2;
   lines.forEach((l, i) => {
     const size = i === 0 ? titleSize : bodySize;
     if (i > 0) ty += (i === 1 ? titleSize / 2 : bodySize / 2) + lineGap + size / 2;

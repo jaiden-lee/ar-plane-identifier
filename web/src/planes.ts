@@ -20,6 +20,16 @@ export type Plane = {
   distanceKm: number;
   bearingDeg: number;
   offsetDeg?: number;
+  /** Raw ADS-B emitter category (e.g. "A3" large, "A7" rotorcraft). Optional for older data. */
+  category?: string | null;
+  /** 'helicopter' if category A7 or a known helicopter type; missing = treat as plane. */
+  kind?: 'plane' | 'helicopter';
+  /** Status flags from flight-service (optional so older data still loads). See CLAUDE.md. */
+  onGround?: boolean;
+  /** Emergency type ("general", "minfuel", "nordo", "unlawful", "downed"), null if none. */
+  emergency?: string | null;
+  military?: boolean;
+  medical?: boolean;
 };
 
 export type LatLon = { lat: number; lon: number };
@@ -51,7 +61,7 @@ export function startFixtureFeed(): PlaneFeed {
   return { get: () => state, stop: () => {} };
 }
 
-const POLL_MS = 2000;
+const POLL_MS = 1000;
 
 /**
  * Polls GET /api/flights/nearby. The search radius is left to flight-service's defaults.
