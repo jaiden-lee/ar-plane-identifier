@@ -10,8 +10,8 @@ export default defineConfig({
     fs: { allow: ['..'] },
     // One tunnel for everything: the phone only ever talks to this server.
     proxy: {
-      '/api/flights': 'http://localhost:8001',
-      '/api/voice': 'http://localhost:8002',
+      '/api/flights': 'http://127.0.0.1:8001',
+      '/api/voice': 'http://127.0.0.1:8002',
     },
   },
 });

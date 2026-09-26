@@ -17,6 +17,8 @@ export type HudState = {
   /** tan(half horizontal FOV) of what one eye shows. */
   halfTan: number;
   planes: Plane[];
+  /** Data feed status, shown when there are no planes at all (e.g. "live · waiting for GPS"). */
+  status: string;
   /** Frame timestamp (same for both eyes) for animations. */
   timeMs: number;
 };
@@ -68,6 +70,12 @@ export function drawHud(ctx: CanvasRenderingContext2D, w: number, h: number, s: 
     .filter((x) => Math.abs(x.off) <= half)
     .map((x) => ({ ...x, x: projectX(x.off, s.halfTan, w) }))
     .filter((x): x is typeof x & { x: number } => x.x != null && x.x >= x0 && x.x <= x1);
+
+  if (s.planes.length === 0) {
+    focusAnim = null;
+    label(ctx, w / 2, labelRowY(barY) + fs(18), `No planes · ${s.status}`, fs(11), COLORS.text, 'center');
+    return;
+  }
 
   if (onBar.length === 0) {
     focusAnim = null;

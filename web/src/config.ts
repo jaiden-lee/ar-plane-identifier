@@ -44,7 +44,16 @@ export type Settings = {
   cameraZoom: number | null;
   /** '' = auto (rear-facing). */
   cameraId: string;
+  /**
+   * Where plane data comes from:
+   *   demo    - flight-service demo snapshot (fixed location, no GPS); falls back to the fixture if unreachable
+   *   live    - flight-service with real GPS
+   *   fixture - shared/fixtures/demo-planes.json, no backend
+   */
+  dataMode: DataMode;
 };
+
+export type DataMode = 'demo' | 'live' | 'fixture';
 
 export const DEFAULT_SETTINGS: Settings = {
   presetId: 'generic',
@@ -55,6 +64,7 @@ export const DEFAULT_SETTINGS: Settings = {
   fovScale: 1,
   cameraZoom: null,
   cameraId: '',
+  dataMode: 'demo',
 };
 
 const STORAGE_KEY = 'ar-plane-settings-v4';

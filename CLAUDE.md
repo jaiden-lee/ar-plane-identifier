@@ -23,7 +23,7 @@ We don't do any computer vision. We use the phone's sensors plus geometry:
 
 1. **Inputs:** user's GPS position (lat/lon) and the compass heading the camera is pointing (degrees clockwise from north).
 2. **View cone:** two rays from the user at `heading − fov/2` and `heading + fov/2`, where `fov` is the **horizontal field of view of what's shown in each eye** (so labels line up with the camera image). The browser can't report camera FOV, so it's a calibrated config constant.
-3. **Nearby planes:** fetch all aircraft within a radius of the user (default ~15 mi / 25 km).
+3. **Nearby planes:** fetch all aircraft within a radius of the user. flight-service owns the radius: **12 km** live (`DEFAULT_RADIUS_KM`), **40 km** in demo mode (`DEMO_RADIUS_KM`); the web app doesn't send `radiusKm`.
 4. **Filter:** for each plane, take the bearing from the user to the plane. If it falls between the two rays, the plane is "in view".
 5. **Display:** a diamond on the compass bar for every plane in view; the info card only for the closest plane **if it's within ±7.5° of center** (the "focus cone", 15° total). Screen x uses a pinhole projection: `x = eyeCenterX + tan(angleDiff) / tan(fov/2) * (eyeWidth/2)`.
 
@@ -188,7 +188,7 @@ Jaiden's app calls `startVoice` after the Start tap and renders the state indica
 1. ✅ Start button → rear camera → side-by-side stereo view on Android Chrome over ngrok, with in-headset calibration (see [Web app notes](#web-app-notes)).
 2. ✅ Camera heading from device orientation (+ smoothing, declination); desktop dev mode with arrow-key heading.
 3. ✅ Cone filter + compass-bar diamonds + info card for the focused plane, using the fixture.
-4. Hook up live flight-service (polling, demo toggle).
+4. ✅ Hook up live flight-service (polling, Data mode on the start screen, demo fallback).
 5. Mount voice module; show listening/thinking state and answers.
 6. Polish: ✅ FOV calibration, ✅ compass strip, ✅ off-screen arrow to the nearest plane, ✅ markers for other in-view planes; still to do: radar mini-map, then (if time) true vertical placement from altitude + phone pitch.
 
@@ -237,13 +237,19 @@ Code lives in `web/src/`:
 
 Run with `npm run dev` in `web/` plus `ngrok http 5173`.
 
-**URL options:** `?dev=1` (desktop: arrow keys turn, camera optional, no fullscreen) · `?source=live` (poll flight-service instead of the fixture) · `?demo=0` (with live: real GPS instead of the demo location) · `?orient=event` (force `deviceorientationabsolute` instead of `AbsoluteOrientationSensor`).
+**URL options:** `?dev=1` (desktop: arrow keys turn, camera optional, no fullscreen) · `?data=demo|live|fixture` (override the start screen's Data setting) · `?orient=event` (force `deviceorientationabsolute` instead of `AbsoluteOrientationSensor`).
 
 - **Stereo layout:** each eye's image is centered under its Cardboard lens using physical mm (CSS px per mm comes from a per-phone preset of the screen's long edge), not at 1/4 and 3/4 of the screen.
 - **Camera:** requests a **4:3** stream (1440×1080). A 16:9 stream cropped to the near-square eye loses ~37% of its width and looks very zoomed in. The image fills each eye (`object-fit: cover`); the field of view is widened with the camera's hardware zoom (defaults to the minimum, i.e. ultrawide), not by shrinking the image.
 - **Heading:** the rear camera looks along the device's −Z axis, so heading = compass direction of −(3rd column of the device→earth rotation matrix). This works with the phone in landscape or crooked in the headset (raw `alpha` would follow the phone's top edge). The direction vector is smoothed (not the angle, so 359°→0° doesn't jump). Verified numerically: quaternion and Euler paths agree.
 - **FOV:** estimated from the preset's main-camera FOV ÷ hardware zoom × `object-fit: cover` crop, times a calibrated `fovScale`.
-- **Plane data:** the fixture is imported directly from `shared/fixtures/` (Vite `server.fs.allow: ['..']`). The live feed polls `/api/flights/nearby` every 2 s with `fovDeg=360` and does the cone filter per frame from `bearingDeg` + live heading. On errors it keeps the last good data.
+- **Plane data** is picked by the **Data** dropdown on the start screen (saved in settings):
+  - **Demo snapshot** (default): flight-service with `demo=1` (fixed Georgia Tech location, frozen snapshot, no GPS). If the service has never answered, it shows the fixture instead so the sky is never empty on stage.
+  - **Live (GPS)**: flight-service with the phone's GPS position (asks for location permission).
+  - **Offline**: `shared/fixtures/demo-planes.json` imported directly (Vite `server.fs.allow: ['..']`), no backend.
+
+  The feed polls `/api/flights/nearby` every 2 s with `fovDeg=360` (no `radiusKm`) and does the cone filter per frame from `bearingDeg` + live heading. On errors it keeps the last good data. When there are no planes at all, the HUD shows the feed status under the compass (e.g. "No planes · live · waiting for GPS").
+- **Running the full stack locally:** `npm run dev` in `web/`, flight-service with `.venv/Scripts/python -m uvicorn app.main:app --host 127.0.0.1 --port 8001` in `flight-service/`, and `ngrok http 5173`. The Vite proxy targets `127.0.0.1` (not `localhost`): on Windows, `localhost` tries IPv6 first and adds ~2 s per request.
 - **In-headset calibration** (saved in localStorage) is **locked by default** so stray touches do nothing. **Double-tap the middle** to unlock, then middle tap cycles **zoom → tilt → spacing → shift → size → fov → info → locked**, left/right taps adjust. It re-locks after 6 s idle (except on info). **Tilt** matters most in practice: the phone never sits perfectly level in the headset, and a crooked phone puts one eye's image higher than the other (double crosshair). Tilt rotates the whole two-eye layout to compensate.
 - **HUD rule:** anything drawn on the overlay must be drawn identically in **both** eyes, or it won't fuse (text shown to one eye only flickers and is hard to read).
 - **Exiting:** **long-press (1.5 s)** returns to the start screen. Leaving fullscreen (often an accidental back-swipe from the headset edge) does *not* exit the view: a "tap to resume" hint appears and the next tap re-enters fullscreen. The back gesture is swallowed while in the view.

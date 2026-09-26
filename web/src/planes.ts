@@ -54,13 +54,14 @@ export function startFixtureFeed(): PlaneFeed {
 const POLL_MS = 2000;
 
 /**
- * Polls GET /api/flights/nearby. Always asks for fovDeg=360: the web app does the per-frame
+ * Polls GET /api/flights/nearby. The search radius is left to flight-service's defaults.
+ * Always asks for fovDeg=360: the web app does the per-frame
  * cone filter itself (labels, off-screen arrows), so it needs every plane in range.
- * On failure it keeps showing the last good data.
+ * On failure it keeps showing the last good data. In demo mode, if the service has never
+ * answered, it shows the fixture (same demo location) so the sky is never empty on stage.
  */
 export function startLiveFeed(opts: {
   demo: boolean;
-  radiusKm: number;
   getPosition: () => LatLon | null;
   getHeading: () => number | null;
 }): PlaneFeed {
@@ -77,7 +78,6 @@ export function startLiveFeed(opts: {
         lat: pos.lat.toFixed(5),
         lon: pos.lon.toFixed(5),
         fovDeg: '360',
-        radiusKm: String(opts.radiusKm),
         demo: opts.demo ? '1' : '0',
       });
       const heading = opts.getHeading();
@@ -89,7 +89,12 @@ export function startLiveFeed(opts: {
         state.planes = data.planes;
         state.status = `live${data.demo ? ' demo' : ''} · ${data.planes.length} planes`;
       } catch {
-        state.status = `live · offline (${state.planes.length} cached)`;
+        if (opts.demo && state.planes.length === 0) {
+          state.planes = FIXTURE.planes;
+          state.status = 'service offline · showing fixture';
+        } else {
+          state.status = `service offline · ${state.planes.length} cached`;
+        }
       }
     }
     if (!stopped) timer = window.setTimeout(poll, POLL_MS);

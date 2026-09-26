@@ -1,5 +1,5 @@
 import { DEFAULT_IPD_MM, DEFAULT_SETTINGS, PRESETS, detectPreset, getPreset, loadSettings, pxPerMm, saveSettings } from './config';
-import type { Settings } from './config';
+import type { DataMode, Settings } from './config';
 import { describeStream, getZoom, getZoomRange, listCameras, setZoom, startCamera } from './camera';
 import { halfFovDeg, normalizeDeg, visibleHalfTan } from './geo';
 import { drawHud } from './hud';
@@ -12,20 +12,18 @@ import type { StereoView } from './stereo';
 
 // URL options:
 //   ?dev=1          desktop dev mode: arrow keys set the heading, camera optional, no fullscreen
-//   ?source=live    poll flight-service instead of the shared fixture
-//   ?demo=0         with source=live, use real GPS instead of the fixed demo location
+//   ?data=demo|live|fixture   override the start screen's Data setting
 //   ?orient=event   force deviceorientation events instead of AbsoluteOrientationSensor
 const params = new URLSearchParams(location.search);
 const DEV = params.has('dev');
-const SOURCE = params.get('source') === 'live' ? 'live' : 'fixture';
-const DEMO = params.get('demo') !== '0';
+const DATA_OVERRIDE = params.get('data') as DataMode | null;
 const FORCE_ORIENT_EVENTS = params.get('orient') === 'event';
-const RADIUS_KM = 40;
 
 const startScreen = document.getElementById('start-screen')!;
 const presetSelect = document.getElementById('preset-select') as HTMLSelectElement;
 const ipdInput = document.getElementById('ipd-input') as HTMLInputElement;
 const cameraSelect = document.getElementById('camera-select') as HTMLSelectElement;
+const dataSelect = document.getElementById('data-select') as HTMLSelectElement;
 const startBtn = document.getElementById('start-btn') as HTMLButtonElement;
 const startStatus = document.getElementById('start-status')!;
 const stereoEl = document.getElementById('stereo')!;
@@ -68,6 +66,7 @@ async function initStartScreen() {
   };
   presetSelect.value = settings.presetId;
   ipdInput.value = String(settings.ipdMm);
+  dataSelect.value = DATA_OVERRIDE ?? settings.dataMode;
   await refreshCameraList();
 
   if (DEV) startStatus.textContent = 'Dev mode: ← → turn (hold Shift for 10°).';
@@ -91,6 +90,7 @@ function readSettingsFromForm() {
     presetId: presetSelect.value,
     ipdMm: Number.isFinite(ipd) && ipd > 0 ? ipd : DEFAULT_IPD_MM,
     cameraId: cameraSelect.value,
+    dataMode: dataSelect.value as DataMode,
   };
   saveSettings(settings);
 }
@@ -149,7 +149,14 @@ function frame() {
   );
   lastHalfFovDeg = halfFovDeg(halfTan);
 
-  const hud = { headingDeg: currentHeading(), halfTan, planes: feed?.get().planes ?? [], timeMs: performance.now() };
+  const feedState = feed?.get();
+  const hud = {
+    headingDeg: currentHeading(),
+    halfTan,
+    planes: feedState?.planes ?? [],
+    status: feedState?.status ?? '',
+    timeMs: performance.now(),
+  };
   for (const eye of view.eyes) drawHud(eye.ctx, width, height, hud);
 }
 
@@ -192,11 +199,11 @@ async function start() {
     keepScreenOn();
 
     if (!DEV) orientation = startOrientation(FORCE_ORIENT_EVENTS);
-    if (SOURCE === 'live') {
-      if (!DEMO) gps = watchPosition();
+    if (settings.dataMode !== 'fixture') {
+      const demo = settings.dataMode === 'demo';
+      if (!demo) gps = watchPosition();
       feed = startLiveFeed({
-        demo: DEMO,
-        radiusKm: RADIUS_KM,
+        demo,
         getPosition: () => gps?.get() ?? null,
         getHeading: currentHeading,
       });
