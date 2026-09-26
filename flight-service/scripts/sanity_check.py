@@ -9,10 +9,12 @@ Usage (from flight-service/):  python scripts/sanity_check.py
 import asyncio
 import math
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import httpx  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app import adsb  # noqa: E402
@@ -178,6 +180,35 @@ def test_status_fields() -> None:
     check("dbFlags 8 (LADD) -> not military", n(dbFlags=8)["military"] is False)
 
 
+def test_rate_limit() -> None:
+    print("rate limiting / GPS jitter (adsb.lol mocked)")
+    import importlib
+
+    importlib.reload(adsb)
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        if len(calls) == 1:
+            return httpx.Response(200, json={"ac": [{"hex": "x1"}]})
+        return httpx.Response(429, headers={"retry-after": "30"})
+
+    real = httpx.AsyncClient
+    httpx.AsyncClient = lambda **kw: real(transport=httpx.MockTransport(handler), **kw)
+    try:
+        a = asyncio.run(adsb.fetch_point(33.77561, -84.39631, 9))
+        check("first fetch ok", a == [{"hex": "x1"}])
+        b = asyncio.run(adsb.fetch_point(33.7759, -84.3968, 9))  # GPS jitter, same ~1 km cell
+        check("GPS jitter reuses the cache (no 2nd upstream call)", len(calls) == 1 and b == a, str(calls))
+        time.sleep(1.1)  # cache expires
+        c = asyncio.run(adsb.fetch_point(33.7756, -84.3963, 9))
+        check("429 -> last good data, not an empty sky", len(calls) == 2 and c == a, str(len(calls)))
+        d = asyncio.run(adsb.fetch_point(33.9, -84.1, 20))  # different position/radius during cooldown
+        check("cooldown: no upstream call, last good served", len(calls) == 2 and d == a, str(len(calls)))
+    finally:
+        httpx.AsyncClient = real
+
+
 def test_upstream_failure() -> None:
     print("upstream failure (real fetch_point, unreachable host)")
     import importlib
@@ -193,6 +224,7 @@ if __name__ == "__main__":
     test_route_parsing()
     test_endpoint()
     test_status_fields()
+    test_rate_limit()
     test_upstream_failure()
     print(f"\n{'ALL PASSED' if failures == 0 else f'{failures} FAILED'}")
     sys.exit(1 if failures else 0)

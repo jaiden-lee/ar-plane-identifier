@@ -34,7 +34,7 @@ curl "localhost:8001/api/flights/nearby?lat=33.7756&lon=-84.3963&heading=180"
 
 ## Data sources
 
-- Positions: `https://api.adsb.lol/v2/point/{lat}/{lon}/{nm}` (cached 1 s, matching the web app's 1 s polling). Requires a non-default User-Agent (adsb.lol 403s `python-httpx`).
+- Positions: `https://api.adsb.lol/v2/point/{lat}/{lon}/{nm}` (cached 1 s, matching the web app's 1 s polling). adsb.lol returns 429 at this rate, so the query center is snapped to a ~1 km grid (GPS jitter reuses the cache), a 429 triggers a `Retry-After` backoff (default 5 s), and failures serve the most recent good data instead of an empty list. Requires a non-default User-Agent (adsb.lol 403s `python-httpx`).
 - Routes: `POST https://adsb.im/api/0/routeset` (the `api.adsb.lol` mirror currently returns empty responses). Cached per callsign for 30 min. Only `plausible` routes are used. For multi-leg routes, the leg the plane is currently flying is chosen by position.
 - `typeName` and `airline` come from small lookup tables in `app/normalize.py`.
 - Status fields, also in `app/normalize.py`:

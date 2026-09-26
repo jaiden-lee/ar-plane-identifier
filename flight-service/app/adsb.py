@@ -1,5 +1,6 @@
 """adsb.lol client: nearby aircraft + best-effort route lookup (both cached)."""
 import logging
+import time
 
 import httpx
 
@@ -19,24 +20,52 @@ HEADERS = {"User-Agent": "ar-plane-identifier/0.1 (hackathon)"}
 _point_cache = TTLCache(ttl_s=1.0)  # matches the web app polling every 1 s
 _route_cache = TTLCache(ttl_s=30 * 60)  # callsign -> (origin, destination), (None, None) if unknown
 
+# Query center is snapped to a ~1 km grid (2 decimals) so GPS jitter doesn't create a new cache
+# key (and a new upstream call) every poll. Callers recompute distance/bearing from the user's
+# exact position and trim to the real radius; main.py already adds a 1 nm margin to cover the snap.
+KEY_DECIMALS = 2
+# adsb.lol rate-limits (429). Back off for Retry-After seconds (default below) instead of retrying.
+RATE_LIMIT_BACKOFF_S = 5.0
+_cooldown_until = 0.0
+# Most recent successful response for any key: shown instead of an empty sky when upstream fails.
+_last_good: list[dict] | None = None
+
+
+def _retry_after_s(r: httpx.Response) -> float:
+    try:
+        return max(1.0, min(60.0, float(r.headers.get("retry-after", RATE_LIMIT_BACKOFF_S))))
+    except ValueError:
+        return RATE_LIMIT_BACKOFF_S
+
 
 async def fetch_point(lat: float, lon: float, radius_nm: float) -> list[dict]:
     """Raw readsb aircraft within radius_nm. Falls back to the last good result on failure."""
+    global _cooldown_until, _last_good
     nm = max(1, min(MAX_RADIUS_NM, round(radius_nm)))
-    key = (round(lat, 3), round(lon, 3), nm)
+    qlat, qlon = round(lat, KEY_DECIMALS), round(lon, KEY_DECIMALS)
+    key = (qlat, qlon, nm)
     cached = _point_cache.get(key)
     if cached is not None:
         return cached
+    fallback = _point_cache.get_stale(key) or _last_good or []
+    if time.monotonic() < _cooldown_until:
+        return fallback
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT, headers=HEADERS) as client:
-            r = await client.get(POINT_URL.format(lat=lat, lon=lon, nm=nm))
+            r = await client.get(POINT_URL.format(lat=qlat, lon=qlon, nm=nm))
+            if r.status_code == 429:
+                wait = _retry_after_s(r)
+                _cooldown_until = time.monotonic() + wait
+                log.warning("adsb.lol rate limited (429); backing off %.0f s", wait)
+                return fallback
             r.raise_for_status()
             ac = r.json().get("ac") or []
         _point_cache.set(key, ac)
+        _last_good = ac
         return ac
     except Exception as e:  # never let upstream failures surface as 500s
         log.warning("adsb.lol point fetch failed: %s", e)
-        return _point_cache.get_stale(key) or []
+        return fallback
 
 
 def parse_route(entry: dict, lat: float | None = None, lon: float | None = None) -> tuple[str | None, str | None]:
