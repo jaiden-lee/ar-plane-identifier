@@ -113,6 +113,10 @@ def normalize(ac: dict, center_lat: float, center_lon: float) -> dict | None:
     category = (ac.get("category") or "").strip().upper() or None
     alt = ac.get("alt_baro")
     altitude_ft = 0.0 if alt == "ground" else _num(alt)
+    # ft/min, + = climbing. baro_rate is the common one; geom_rate (GPS) as fallback.
+    vertical_rate = _num(ac.get("baro_rate"))
+    if vertical_rate is None:
+        vertical_rate = _num(ac.get("geom_rate"))
 
     airline = None
     if callsign and len(callsign) > 3 and callsign[:3].isalpha() and callsign[3].isdigit():
@@ -138,6 +142,7 @@ def normalize(ac: dict, center_lat: float, center_lon: float) -> dict | None:
         "altitudeFt": altitude_ft,
         "groundSpeedKt": _num(ac.get("gs")),
         "trackDeg": _num(ac.get("track")),
+        "verticalRateFpm": vertical_rate,
         "distanceKm": round(haversine_km(center_lat, center_lon, lat, lon), 3),
         "bearingDeg": round(bearing_deg(center_lat, center_lon, lat, lon), 2),
     }

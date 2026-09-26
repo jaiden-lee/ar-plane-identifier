@@ -25,7 +25,7 @@ from app.geo import angle_diff, bearing_deg, haversine_km  # noqa: E402
 
 PLANE_KEYS = {
     "id", "callsign", "registration", "typeCode", "typeName", "airline", "origin", "destination",
-    "lat", "lon", "altitudeFt", "groundSpeedKt", "trackDeg", "distanceKm", "bearingDeg",
+    "lat", "lon", "altitudeFt", "groundSpeedKt", "trackDeg", "verticalRateFpm", "distanceKm", "bearingDeg",
 }
 
 

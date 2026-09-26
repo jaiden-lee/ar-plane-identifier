@@ -17,6 +17,8 @@ export type Plane = {
   altitudeFt: number | null;
   groundSpeedKt: number | null;
   trackDeg: number | null;
+  /** Vertical rate in ft/min (+ = climbing), from ADS-B baro_rate. Optional for older data. */
+  verticalRateFpm?: number | null;
   distanceKm: number;
   bearingDeg: number;
   offsetDeg?: number;

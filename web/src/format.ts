@@ -75,11 +75,22 @@ export function flightLabel(p: Plane): string {
   return cs;
 }
 
+/** Rates this small are ADS-B noise around level flight (readsb reports in 64 fpm steps). */
+const LEVEL_FPM = 150;
+
+/** Climb/descent from ADS-B baro_rate: "↑ 1,200 fpm", "↓ 800 fpm", "level", or null if unknown. */
+function verticalRate(p: Plane): string | null {
+  const r = p.verticalRateFpm;
+  if (r == null || p.onGround) return null;
+  if (Math.abs(r) < LEVEL_FPM) return 'level';
+  return `${r > 0 ? '↑' : '↓'} ${Math.abs(Math.round(r)).toLocaleString('en-US')} fpm`;
+}
+
 /**
  * Info card: a compact 3-line notification attached under the compass bar.
  *   DL 1234 · Delta Air Lines
  *   Airbus A321-200 · LGA → ATL
- *   4,200 ft · 180 kt · 8.4 km
+ *   4,200 ft · ↓ 800 fpm · 180 kt · 8.4 km
  * Missing fields are dropped.
  */
 export function cardLines(p: Plane): string[] {
@@ -89,6 +100,7 @@ export function cardLines(p: Plane): string[] {
   const type = [p.typeName ?? p.typeCode ?? fallback, route].filter(Boolean).join(' · ');
   const stats = [
     p.altitudeFt != null ? `${Math.round(p.altitudeFt).toLocaleString('en-US')} ft` : null,
+    verticalRate(p),
     p.groundSpeedKt != null ? `${Math.round(p.groundSpeedKt)} kt` : null,
     `${p.distanceKm.toFixed(1)} km`,
   ]

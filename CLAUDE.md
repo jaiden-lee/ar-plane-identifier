@@ -117,6 +117,7 @@ type Plane = {
   altitudeFt: number | null;
   groundSpeedKt: number | null;
   trackDeg: number | null;     // direction the plane is moving
+  verticalRateFpm: number | null; // ft/min, + = climbing (readsb baro_rate, else geom_rate)
   distanceKm: number;          // from the query position
   bearingDeg: number;          // from the query position, [0, 360), true north
   offsetDeg?: number;          // signed angle from the request heading, (-180, 180], negative = left
@@ -129,7 +130,7 @@ type Plane = {
 };
 ```
 
-Any field may be `null` except position/distance/bearing (and `kind`, which is always set). The UI must handle missing data gracefully.
+Any field may be `null` except position/distance/bearing (and `kind`, which is always set). The UI must handle missing data gracefully. The web app treats `verticalRateFpm` as optional (older data lacks it) and shows it on the info card's stats line (`↑ 1,200 fpm` / `↓ 800 fpm` / `level` under 150 fpm; hidden on the ground).
 
 `kind` is derived in flight-service (`_kind()` in `app/normalize.py`): `category == "A7"` **or** `typeCode` in `HELICOPTER_TYPES` (catches helicopters that don't broadcast a category). Everything else is `'plane'`. The web app treats a missing `kind` as `'plane'`.
 
@@ -238,7 +239,7 @@ Jaiden's app calls `startVoice` after the Start tap and renders the state indica
 - **Heading is true north** from the compass (no manual "recenter"), with Atlanta declination hardcoded as −5.3° (`MAG_DECLINATION_DEG` in `web/src/orientation.ts`). Indoors it may be off by 10–30°; accepted.
 - **Demo plane layout:** planes spread around 360° (like real traffic); the off-screen arrow guides the viewer to the nearest one.
 - **Target phones:** Google **Pixel 10** (primary), Galaxy S22+ (backup), Android Chrome. iPhone 13 mini is not a demo target.
-- **Info card:** 3 compact lines: `DL 1234 · Delta Air Lines` / `Airbus A321-200 · LGA → ATL` / `4,200 ft · 180 kt · 8.4 km`. ICAO callsigns are shown with IATA codes for common airlines (`DAL1234` → `DL 1234`, map in `web/src/format.ts`).
+- **Info card:** 3 compact lines: `DL 1234 · Delta Air Lines` / `Airbus A321-200 · LGA → ATL` / `4,200 ft · ↓ 800 fpm · 180 kt · 8.4 km`. ICAO callsigns are shown with IATA codes for common airlines (`DAL1234` → `DL 1234`, map in `web/src/format.ts`).
 - **HUD layout:** everything hangs off the compass bar near the top of the view (plane/helicopter icons on the bar, degree labels + heading under it, info card attached under that). Nothing in the middle of the view except the crosshair. Planes are placed horizontally only (true elevation placement is a stretch).
 - **Fixture:** `shared/fixtures/demo-planes.json` currently holds **synthetic** planes (correct bearings/distances from GT) so web work can start now. Wesley replaces it with a real adsb.lol snapshot of the same shape.
 

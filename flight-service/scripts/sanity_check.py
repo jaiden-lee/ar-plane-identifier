@@ -24,7 +24,7 @@ from app.main import app  # noqa: E402
 CENTER = (33.7756, -84.3963)  # Georgia Tech
 PLANE_KEYS = {
     "id", "callsign", "registration", "typeCode", "typeName", "airline", "origin", "destination",
-    "lat", "lon", "altitudeFt", "groundSpeedKt", "trackDeg", "distanceKm", "bearingDeg",
+    "lat", "lon", "altitudeFt", "groundSpeedKt", "trackDeg", "verticalRateFpm", "distanceKm", "bearingDeg",
     "category", "kind", "onGround", "emergency", "military", "medical",
 }
 
