@@ -9,8 +9,8 @@ and `web/src/voice/` only; do not edit other paths.
 | Priority | Item | State |
 |---|---|---|
 | 1 | `POST /api/voice/ask` with plane context, curl-testable | ✅ Done, verified live |
-| 2 | Browser module `web/src/voice/` (wake phrase, STT, TTS) | ⬜ Not started |
-| 3 | Head-tilt fallback trigger | ⬜ Not started |
+| 2 | Browser module `web/src/voice/` (wake phrase, STT, TTS) | 🟡 Built + tested with fake mic; needs a real-phone test |
+| 3 | Head-tilt fallback trigger | 🟡 `voice.listen()` hook exists; tilt detection not wired |
 | 4 | Prompt tuning for short, fun, accurate spoken answers | 🟡 First pass done |
 
 ## Decisions
@@ -62,13 +62,20 @@ Run and curl instructions are in `README.md`. The key lives in `.env` (gitignore
 - Free-tier tail latency: one request in five stalled to ~9 s (timeout + retry). If that
   shows up in the demo, drop the timeout to ~5 s so the fallback fires sooner.
 
-## Browser module plan (`web/src/voice/`, not started)
+## Browser module (`web/src/voice/`)
 
-- Web app is plain TypeScript + Vite, no framework. Jaiden has not referenced the module
-  yet; `startVoice(opts)` per the root contract is the whole interface.
-- Vite dev server already proxies `/api/voice` → `localhost:8002`.
-- Continuous `SpeechRecognition` (Android Chrome), auto-restart on end, fuzzy "hey grok"
-  match, POST to `/api/voice/ask`, `speechSynthesis` for the reply, state callbacks
-  idle → listening → thinking → speaking.
-- Must degrade gracefully: if the service is down, speak a short "voice is offline" line
-  and keep the HUD working.
+Built 2026-09-25. See `web/src/voice/README.md` for usage and gotchas.
+
+- `startVoice(opts)` per the root contract, plus extras: `onError`, `endpoint`, `lang`,
+  `questionTimeoutMs`, `speak`, and an injectable `recognizer` for tests. Returns
+  `{ stop, ask, listen, getState }` (`ask`/`listen` are additive: direct question, and
+  head-tilt entry into "listening").
+- State machine: idle → listening (wake heard, or `listen()`) → thinking (POST) →
+  speaking (TTS; mic paused so it doesn't hear itself) → idle. "hey grok" alone opens an
+  8 s window for the question.
+- Wake matcher (`wake.ts`) is a pure function; 13-case check in this session all pass.
+- Verified in Node with a fake recognizer against the live service: all 6 flows correct
+  (one-breath, two-step, timeout, ignore, tilt, offline). **Not yet run on the Pixel.**
+- Dev page: `web/src/voice/dev.html` (fake mic via text box, or real mic).
+- Web app is plain TS + Vite; Vite proxies `/api/voice` → :8002. Jaiden has not mounted the
+  module yet; nothing outside `web/src/voice/` was touched.
