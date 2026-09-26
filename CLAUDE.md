@@ -45,7 +45,8 @@ We flatten 3D to 2D: **altitude is ignored** for detection. We only care about h
 - **Indoor compass is unreliable** (steel, electronics). Another reason demo mode matters.
 - **Compass noise.** Smooth the heading (e.g. exponential moving average) so labels don't jitter.
 - **One tap to start.** Camera, mic, orientation, and audio playback all need a user gesture. A single "Start" button (tapped before the phone goes into the Cardboard) unlocks everything.
-- **HTTPS required** for camera/geolocation/sensors → we test via **ngrok**.
+- **HTTPS required** for camera/geolocation/sensors → we test via **ngrok** (agent must be **≥ 3.20**; older versions are rejected on free accounts — run `ngrok update`). The free URL changes on every restart unless you use your free static domain (`ngrok http 5173 --url <domain>`).
+- **Windows + agents: always read/write files as UTF-8.** Python's `open()` defaults to cp1252 on Windows and silently corrupts characters like `·`, `✈`, `°` (this already broke `index.html` once). Pass `encoding="utf-8"` or use the editor tools.
 
 ## Demo mode (required — the demo is indoors)
 
@@ -72,8 +73,8 @@ Phone browser (web app, via ngrok HTTPS)
 ```
 
 - The web app's dev server **proxies** `/api/flights/*` and `/api/voice/*` to the two services. Result: **one ngrok tunnel**, no CORS issues.
-- **Division of math:** the flight service computes each plane's `bearingDeg` and `distanceKm` from the user. The web app does the per-frame cone filter and label placement (a few lines) using the live heading. Heading changes every frame; sending it to a server each frame would be laggy.
-- The web app polls `/api/flights/nearby` every ~3–5 s.
+- **Division of math:** the flight service takes the user's lat/lon/heading, computes each plane's `bearingDeg`, `distanceKm` and `offsetDeg`, and does the cone filter. Between polls the web app re-positions labels every frame from `bearingDeg` + its live heading (the head moves faster than we poll), so `bearingDeg` must always be present.
+- The web app polls `/api/flights/nearby` every ~1–3 s. The service should cache adsb.lol upstream (refresh every few seconds) so frequent polls are cheap.
 - The xAI API key lives **only** in voice-service (never in the browser).
 
 ### Repo layout and ownership
@@ -118,6 +119,7 @@ type Plane = {
   trackDeg: number | null;     // direction the plane is moving
   distanceKm: number;          // from the query position
   bearingDeg: number;          // from the query position, [0, 360), true north
+  offsetDeg?: number;          // signed angle from the request heading, (-180, 180], negative = left
 };
 ```
 
@@ -125,14 +127,18 @@ Any field may be `null` except position/distance/bearing. The UI must handle mis
 
 ### Flight service
 
-`GET /api/flights/nearby?lat={lat}&lon={lon}&radiusKm={r}&demo={0|1}`
+`GET /api/flights/nearby?lat={lat}&lon={lon}&heading={deg}&fovDeg={deg}&radiusKm={r}&demo={0|1}`
+
+- `heading`: degrees clockwise from true north that the user is facing.
+- `fovDeg`: cone width; return planes with `abs(offsetDeg) <= fovDeg/2`. Default 60. The web app will often send a wider value than what's visible (or `360` for the radar / off-screen arrows), so `fovDeg=360` must return every plane in the radius.
+- If `heading` is omitted, skip the cone filter and omit `offsetDeg`.
 
 ```json
 {
   "center": { "lat": 37.62, "lon": -122.38 },
   "demo": false,
   "fetchedAt": "2026-09-25T20:00:00Z",
-  "planes": [ /* Plane[] sorted by distanceKm */ ]
+  "planes": [ /* Plane[] sorted by abs(offsetDeg) if heading given, else by distanceKm */ ]
 }
 ```
 
@@ -179,12 +185,12 @@ Jaiden's app calls `startVoice` after the Start tap and renders the state indica
 ## Workstream priorities
 
 **Jaiden — web app + integration**
-1. Start button → rear camera → side-by-side stereo view on Android Chrome over ngrok.
+1. ✅ Start button → rear camera → side-by-side stereo view on Android Chrome over ngrok, with in-headset calibration (see [Web app notes](#web-app-notes)).
 2. Camera heading from device orientation (+ smoothing, declination); desktop dev mode with arrow-key heading.
 3. Cone filter + positioned label + info card for the centered plane, using the fixture.
 4. Hook up live flight-service (polling, demo toggle).
 5. Mount voice module; show listening/thinking state and answers.
-6. Polish: FOV calibration, visuals (reticle, markers for other in-view planes).
+6. Polish: FOV calibration, compass strip, off-screen arrows to the nearest plane, radar mini-map, markers for other in-view planes, then (if time) true vertical label placement from altitude + phone pitch.
 
 **Wesley — flight service**
 1. `/api/flights/nearby` returning the contract shape from adsb.lol with correct bearing/distance.
@@ -200,12 +206,24 @@ Jaiden's app calls `startVoice` after the Start tap and renders the state indica
 
 ## Decisions made
 
-- **Stack:** `web/` = Vite + TypeScript (Jaiden's agent picks plain TS or React). `flight-service/` and `voice-service/` = Python + FastAPI (each with its own `requirements.txt` and `.venv`). The only coupling between them is the HTTP/JSON contracts above.
+- **Stack:** `web/` = Vite + **plain TypeScript** (no framework; the HUD redraws every frame). `flight-service/` and `voice-service/` = Python + FastAPI (each with its own `requirements.txt` and `.venv`). The only coupling between them is the HTTP/JSON contracts above.
 - **Demo location:** user pinned to **Georgia Tech campus (33.7756, -84.3963)**, with Atlanta Hartsfield-Jackson (ATL, ~15 km south) traffic around it. Demo radius may be raised (e.g. ~30–40 km) to get enough planes spread around 360°. Wesley may adjust if the real snapshot is lopsided.
 - **Declination** for Atlanta is roughly 5–6° W (verify with NOAA's calculator; hardcode it).
+- **Target phones:** Google **Pixel 10** (primary), Galaxy S22+ (backup), Android Chrome. iPhone 13 mini is not a demo target.
+- **Info card (v1):** `DL 1234 · Delta` / `Airbus A321` / `LGA → ATL` / `4,200 ft · 180 kt · 8.4 km`. Full card only for the plane closest to center.
+- **Label placement:** horizontal position from the plane's angle off-center; vertical position is a fixed band for now (true elevation placement is a stretch).
 - **Fixture:** `shared/fixtures/demo-planes.json` currently holds **synthetic** planes (correct bearings/distances from GT) so web work can start now. Wesley replaces it with a real adsb.lol snapshot of the same shape.
 
 ## Decisions still open
 
-- Exact info-card fields (limited screen space)
-- Camera FOV calibration value for the demo phone
+- Camera FOV value for the demo phone. It depends on the calibrated camera zoom and the crop into each eye, so measure it after the zoom setting is final.
+
+## Web app notes
+
+Code lives in `web/src/`: `config.ts` (phone presets + persisted settings), `camera.ts` (rear camera + hardware zoom), `stereo.ts` (two-eye layout), `main.ts` (start flow, HUD, calibration). Run with `npm run dev` in `web/` plus `ngrok http 5173`.
+
+- **Stereo layout:** each eye's image is centered under its Cardboard lens using physical mm (CSS px per mm comes from a per-phone preset of the screen's long edge), not at 1/4 and 3/4 of the screen.
+- **Camera:** requests a **4:3** stream (1440×1080). A 16:9 stream cropped to the near-square eye loses ~37% of its width and looks very zoomed in. The image fills each eye (`object-fit: cover`); the field of view is widened with the camera's hardware zoom (defaults to the minimum, i.e. ultrawide), not by shrinking the image.
+- **In-headset calibration** (saved in localStorage): tap the middle to cycle **zoom → tilt → spacing → shift → size → info**, tap left/right to adjust. **Tilt** matters most in practice: the phone never sits perfectly level in the headset, and a crooked phone puts one eye's image higher than the other (double crosshair). Tilt rotates the whole two-eye layout to compensate.
+- **HUD rule:** anything drawn on the overlay must be drawn identically in **both** eyes, or it won't fuse (text shown to one eye only flickers and is hard to read).
+- **Exiting:** the Android back gesture leaves fullscreen and returns to the start screen.

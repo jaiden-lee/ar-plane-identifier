@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#000000" />
+    <title>Plane Spotter AR</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="start-screen">
+      <h1>✈ Plane Spotter AR</h1>
+      <label>
+        Phone
+        <select id="preset-select"></select>
+      </label>
+      <label>
+        Lens spacing (mm)
+        <input id="ipd-input" type="number" min="50" max="80" step="1" />
+      </label>
+      <label>
+        Camera
+        <select id="camera-select"></select>
+      </label>
+      <button id="start-btn">Start</button>
+      <p class="hint">In view: tap middle = next setting (zoom / tilt / spacing / shift / size / info) · left/right = adjust · back = exit</p>
+      <p id="start-status"></p>
+    </div>
+    <div id="stereo" hidden></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
