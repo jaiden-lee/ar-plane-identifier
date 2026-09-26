@@ -17,6 +17,7 @@ const logEl = $('log');
 const planeSel = $<HTMLSelectElement>('plane');
 const sayInput = $<HTMLInputElement>('say');
 const speakChk = $<HTMLInputElement>('speak');
+const grokVoiceChk = $<HTMLInputElement>('grokvoice');
 const stopBtn = $<HTMLButtonElement>('stop');
 
 planeSel.add(new Option('(none in view)', ''));
@@ -56,6 +57,7 @@ function begin(useRealMic: boolean) {
     },
     onError: (m) => log(`ERROR: ${m}`),
     speak: speakChk.checked,
+    ttsEndpoint: grokVoiceChk.checked ? '/api/voice/speak' : null,
     recognizer: useRealMic ? undefined : createFakeRecognizer(),
   });
   stopBtn.disabled = false;

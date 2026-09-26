@@ -1,6 +1,7 @@
 # voice-service/ — owner: Allison
 
-Python FastAPI service on port 8002. Serves `POST /api/voice/ask` per root `CLAUDE.md`.
+Python FastAPI service on port 8002. Serves `POST /api/voice/ask` per root `CLAUDE.md`, plus
+`POST /api/voice/speak` (text → MP3 in Grok's "Leo" voice) for the browser module.
 Put `XAI_API_KEY` in `voice-service/.env` (never commit it). Optional: `XAI_MODEL` (default `grok-4-fast`).
 
 ## Run
@@ -45,3 +46,14 @@ No plane in view:
 curl -s localhost:8002/api/voice/ask -H 'content-type: application/json' \
   -d '{"question": "how many seats does an A321 have?", "plane": null}'
 ```
+
+## Grok voice
+
+```sh
+curl -s localhost:8002/api/voice/speak -H 'content-type: application/json' \
+  -d '{"text": "That is a Delta 757 descending toward Atlanta."}' --output leo.mp3 && afplay leo.mp3
+```
+
+Returns `audio/mpeg` (~1.5 s for one sentence). Any non-200 makes the browser fall back to its
+own `speechSynthesis` voice. Change the voice with `XAI_TTS_VOICE` (eve, ara, leo, rex, sal).
+Needs an xAI key even if chat runs on Gemini (`XAI_TTS_API_KEY`).
