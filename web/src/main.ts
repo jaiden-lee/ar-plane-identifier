@@ -10,6 +10,10 @@ import { startFixtureFeed, startLiveFeed, watchPosition } from './planes';
 import type { PlaneFeed } from './planes';
 import { createStereoView } from './stereo';
 import type { StereoView } from './stereo';
+import { createCastCompositor } from './cast/compositor';
+import type { CastCompositor } from './cast/compositor';
+import { startCastPublisher } from './cast/publisher';
+import type { CastPublisher } from './cast/publisher';
 import { startVoice } from './voice';
 import type { VoiceHandle } from './voice';
 
@@ -29,6 +33,7 @@ const cameraSelect = document.getElementById('camera-select') as HTMLSelectEleme
 const dataSelect = document.getElementById('data-select') as HTMLSelectElement;
 const voiceCheck = document.getElementById('voice-check') as HTMLInputElement;
 const radiusInput = document.getElementById('radius-input') as HTMLInputElement;
+const castCheck = document.getElementById('cast-check') as HTMLInputElement;
 const startBtn = document.getElementById('start-btn') as HTMLButtonElement;
 const startStatus = document.getElementById('start-status')!;
 const stereoEl = document.getElementById('stereo')!;
@@ -40,6 +45,8 @@ let orientation: OrientationTracker | null = null;
 let feed: PlaneFeed | null = null;
 let gps: ReturnType<typeof watchPosition> | null = null;
 let voice: VoiceHandle | null = null;
+let cast: { compositor: CastCompositor; publisher: CastPublisher } | null = null;
+let castStatus = '';
 let voiceHud: VoiceHud | null = null;
 let answerTimer = 0;
 let voiceErrorTimer = 0;
@@ -82,6 +89,7 @@ async function initStartScreen() {
   dataSelect.value = DATA_OVERRIDE ?? settings.dataMode;
   voiceCheck.checked = settings.voiceEnabled;
   radiusInput.value = settings.radiusKm == null ? '' : String(settings.radiusKm);
+  castCheck.checked = settings.castEnabled;
   await refreshCameraList();
 
   if (DEV) startStatus.textContent = 'Dev mode: ← → turn (hold Shift for 10°).';
@@ -115,6 +123,7 @@ function readSettingsFromForm() {
     dataMode: dataSelect.value as DataMode,
     voiceEnabled: voiceCheck.checked,
     radiusKm: parseRadius(radiusInput.value),
+    castEnabled: castCheck.checked,
   };
   radiusInput.value = settings.radiusKm == null ? '' : String(settings.radiusKm);
   saveSettings(settings);
@@ -187,6 +196,48 @@ function frame() {
   const [left, right] = view.eyes;
   lastView = drawHud(left.ctx, width, height, hud);
   drawHud(right.ctx, width, height, hud);
+
+  if (cast) {
+    // The cast frame has its own aspect, so its visible FOV differs from an eye's.
+    const castHalfTan = visibleHalfTan(
+      getPreset(settings.presetId).cameraHalfTan1x,
+      zoom,
+      cast.compositor.aspect,
+      streamAspect,
+      settings.fovScale,
+    );
+    cast.compositor.draw(video.videoWidth ? video : null, hud.timeMs, (ctx, w, h) => {
+      drawHud(ctx, w, h, { ...hud, halfTan: castHalfTan });
+      drawCastCrosshair(ctx, w, h);
+    });
+  }
+}
+
+/** The headset's crosshair is a DOM element, so the cast frame draws its own. */
+function drawCastCrosshair(ctx: CanvasRenderingContext2D, w: number, h: number) {
+  ctx.save();
+  ctx.strokeStyle = 'rgba(79, 195, 247, 0.9)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(w / 2, h / 2, 12, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function startCasting() {
+  const compositor = createCastCompositor();
+  const publisher = startCastPublisher(compositor.stream, (s) => {
+    castStatus = s;
+    if (mode === 'info') renderOverlay();
+  });
+  cast = { compositor, publisher };
+}
+
+function stopCasting() {
+  cast?.publisher.stop();
+  cast?.compositor.stop();
+  cast = null;
+  castStatus = '';
 }
 
 /** Starts Allison's voice module. Must run synchronously inside the Start tap (mic + speech need a gesture). */
@@ -228,7 +279,8 @@ function renderOverlay() {
   if (mode === 'info') {
     const o = orientation?.get();
     const hdg = DEV ? `dev ${Math.round(devHeading)}°` : o ? `${Math.round(o.headingDeg)}° ${o.source}` : 'no compass';
-    debug = `<div class="debug">${hdg} · fov ${Math.round(lastHalfFovDeg * 2)}° · ${feed?.get().status ?? ''}<br>
+    const castInfo = cast ? ` · cast ${castStatus}` : '';
+    debug = `<div class="debug">${hdg} · fov ${Math.round(lastHalfFovDeg * 2)}° · ${feed?.get().status ?? ''}${castInfo}<br>
       tilt ${settings.tiltDeg}° · ${settings.ipdMm}mm · shift ${settings.offsetMm}mm · ${Math.round(settings.viewScale * 100)}% · ${stream ? describeStream(stream) : 'no camera'}</div>`;
   }
   const error = hudError ? `<div class="hud-error">${hudError}</div>` : '';
@@ -285,6 +337,7 @@ async function start() {
     hudError = '';
     relayout();
     rafId = requestAnimationFrame(frame);
+    if (settings.castEnabled) startCasting();
     if (stream) {
       watchForFrames(stream);
       applySavedZoom(stream);
@@ -330,6 +383,7 @@ function stopVoiceAssistant() {
 /** Back to the start screen (e.g. after the Android back gesture exits fullscreen). */
 function stop() {
   stopVoiceAssistant();
+  stopCasting();
   cancelAnimationFrame(rafId);
   clearTimeout(lockTimer);
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});

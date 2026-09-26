@@ -1,10 +1,13 @@
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
+import { castSignaling } from './server/cast-signaling';
 
 const SHARED_DIR = fileURLToPath(new URL('../shared', import.meta.url));
 
 export default defineConfig({
   plugins: [
+    // WebRTC signaling for casting the headset view to /cast.html on a laptop.
+    castSignaling(),
     {
       // ../shared is outside the web root, so Vite doesn't watch it by default and keeps serving
       // a stale copy of the fixture after it's regenerated. Watch it explicitly.
@@ -14,6 +17,14 @@ export default defineConfig({
       },
     },
   ],
+  build: {
+    rollupOptions: {
+      input: {
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        cast: fileURLToPath(new URL('./cast.html', import.meta.url)),
+      },
+    },
+  },
   server: {
     host: true,
     port: 5173,

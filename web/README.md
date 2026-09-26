@@ -13,6 +13,14 @@ ngrok http 5173          # HTTPS URL to open on the phone (needs ngrok >= 3.20)
 
 `/api/flights` and `/api/voice` are proxied to ports 8001 / 8002, so one tunnel covers everything.
 
+## Casting to a laptop (judges / demo recording)
+
+1. On the phone's start screen, check **Cast to laptop**, then Start.
+2. On the laptop running `npm run dev`, open `http://localhost:5173/cast.html`.
+
+It connects within a few seconds (peer-to-peer WebRTC; phone and laptop need to reach each other, e.g. same Wi-Fi).
+**Record** saves a `.webm` of the stream (key `R`), `H` hides the control bar. If the network blocks it, use `scrcpy` over USB.
+
 ## Stereo layout
 
 Each eye's image is centered under its Cardboard lens (default 64 mm apart), not at 1/4 and 3/4 of the screen.

@@ -260,7 +260,9 @@ Code lives in `web/src/`:
 | `geo.ts` | Angle helpers, visible-FOV estimate, pinhole projection |
 | `planes.ts` | `Plane` type, fixture feed, live flight-service feed, GPS |
 | `hud.ts` | Canvas HUD: compass bar, plane/helicopter icons, info card, edge arrow, voice subtitles. Layout constants at the top |
-| `format.ts` | Info-card text, callsign formatting |
+| `format.ts` | Info-card text, callsign formatting, aircraft status |
+| `cast/` | Casting the view to a laptop: `compositor.ts` (mono camera + HUD frame), `publisher.ts` (phone), `viewer.ts` (`/cast.html`), `rtc.ts` |
+| `../server/cast-signaling.ts` | Vite dev-server plugin: WebRTC signaling relay at `/api/cast/*` |
 
 Run with `npm run dev` in `web/` plus `ngrok http 5173`.
 
@@ -282,6 +284,7 @@ Run with `npm run dev` in `web/` plus `ngrok http 5173`.
 - **In-headset calibration** (saved in localStorage) is **locked by default** so stray touches do nothing. **Double-tap the middle** to unlock, then middle tap cycles **zoom → tilt → spacing → shift → size → fov → info → locked**, left/right taps adjust. It re-locks after 6 s idle (except on info). **Tilt** matters most in practice: the phone never sits perfectly level in the headset, and a crooked phone puts one eye's image higher than the other (double crosshair). Tilt rotates the whole two-eye layout to compensate.
 - **Voice (Allison's `web/src/voice/`):** `startVoice()` is called synchronously inside the Start tap (mic + speech need the gesture), when the start screen's **Voice** checkbox is on (default). Each frame `drawHud()` returns the focused plane and in-view planes (with `offsetDeg`); the voice module reads those when a question is asked. Voice state, the question, and the answer render as subtitles near the bottom (`VOICE_Y` in `hud.ts`); answers linger 7 s after speaking. Answers are spoken by the phone's `speechSynthesis` (the LLM only returns text). Desktop dev mode: **V** = `voice.listen()` (skip the wake phrase).
 - **Fixture changes:** `vite.config.ts` explicitly watches `../shared` (it's outside the web root, so Vite otherwise keeps serving a stale copy of `demo-planes.json` after it's regenerated).
+- **Casting (spectator view / demo recording):** check **Cast to laptop** on the phone's start screen, then open **`http://localhost:5173/cast.html`** on the laptop running the dev server. The phone composites a single-eye 960×720 frame (camera + the same `drawHud()` + crosshair, 24 fps, its own FOV for the 4:3 frame) and sends it over **WebRTC, peer-to-peer**; only the offer/answer goes through the dev server (`/api/cast/offer`, `/api/cast/answer`, in-memory, latest offer wins), so video doesn't use ngrok bandwidth. Non-trickle ICE, public Google STUN, no TURN: phone and laptop must be able to reach each other (same Wi-Fi without client isolation). The viewer auto-reconnects, has **Record** (saves a `.webm`; `R` key), Fullscreen, and `H` to hide the bar. Encoder is set to `contentHint='detail'` + `maintain-resolution` so HUD text stays sharp. Fallback if the network blocks peer-to-peer: mirror the phone over USB with `scrcpy`. Cast status shows in the calibration **info** line.
 - **HUD rule:** anything drawn on the overlay must be drawn identically in **both** eyes, or it won't fuse (text shown to one eye only flickers and is hard to read).
 - **Exiting:** **long-press (1.5 s)** returns to the start screen. Leaving fullscreen (often an accidental back-swipe from the headset edge) does *not* exit the view: a "tap to resume" hint appears and the next tap re-enters fullscreen. The back gesture is swallowed while in the view.
 

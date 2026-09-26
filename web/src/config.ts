@@ -55,6 +55,8 @@ export type Settings = {
   voiceEnabled: boolean;
   /** Plane search radius. null = flight-service's defaults (15 km live, 40 km demo). */
   radiusKm: number | null;
+  /** Stream the view (camera + HUD) to /cast.html on a laptop over WebRTC. */
+  castEnabled: boolean;
 };
 
 export type DataMode = 'demo' | 'live' | 'fixture';
@@ -71,6 +73,7 @@ export const DEFAULT_SETTINGS: Settings = {
   dataMode: 'demo',
   voiceEnabled: true,
   radiusKm: null,
+  castEnabled: false,
 };
 
 const STORAGE_KEY = 'ar-plane-settings-v4';
