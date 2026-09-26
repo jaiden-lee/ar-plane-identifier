@@ -7,6 +7,7 @@
 //   right under that: info card for the focused plane, attached to the compass
 //                  (drops down like a notification)
 // Voice ("hey grok") status and answers show as subtitles near the bottom.
+// A heading-up radar mini-map sits in the lower left (hidden while a voice answer is showing).
 // The middle of the view stays clear.
 
 import { aircraftStatus, cardLines, flightLabel, statusTag } from './format';
@@ -91,8 +92,111 @@ export function drawHud(ctx: CanvasRenderingContext2D, w: number, h: number, s: 
   ctx.clearRect(0, 0, w, h);
   ctx.textBaseline = 'middle';
   const result = drawPlanes(ctx, w, h, s);
+  // The radar steps aside while a voice question/answer is on screen (they share the bottom of the view).
+  const voiceShowing = !!(s.voice?.answer || s.voice?.transcript);
+  if (s.headingDeg != null && s.planes.length && !voiceShowing) {
+    drawRadar(ctx, w, h, s, s.headingDeg, result.focus?.id ?? null);
+  }
   if (s.voice) drawVoice(ctx, w, h, s.voice, s.timeMs);
   return result;
+}
+
+/** Radar center (fractions of eye width/height) and radius (fraction of eye width). Kept inward: lens edges blur. */
+const RADAR_X = 0.26;
+const RADAR_Y = 0.7;
+const RADAR_R = 0.1;
+/** Radar range snaps to the smallest of these that fits the farthest plane (km). */
+const RADAR_RANGES_KM = [5, 10, 15, 20, 30, 40, 60, 80, 120];
+
+/**
+ * Heading-up radar: you're at the center, your view cone points up, planes are dots at their true
+ * direction and distance (colored by status, focused plane yellow), and N/E/S/W orbit the rim.
+ */
+function drawRadar(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  s: HudState,
+  heading: number,
+  focusId: string | null,
+) {
+  const cx = w * RADAR_X;
+  const cy = h * RADAR_Y;
+  const r = w * RADAR_R;
+  const farthest = Math.max(...s.planes.map((p) => p.distanceKm));
+  const range = RADAR_RANGES_KM.find((km) => km >= farthest) ?? RADAR_RANGES_KM[RADAR_RANGES_KM.length - 1];
+  // Screen angle for a bearing: straight up = where you're looking.
+  const toXY = (bearingDeg: number, frac: number) => {
+    const a = (signedDiffDeg(bearingDeg, heading) * Math.PI) / 180;
+    return [cx + Math.sin(a) * r * frac, cy - Math.cos(a) * r * frac] as const;
+  };
+
+  ctx.save();
+  // Disc + range ring.
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = COLORS.hudDim;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(cx, cy, r / 2, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // View cone (what's on the compass bar) and the focus cone inside it.
+  const wedge = (halfDeg: number, fill: string) => {
+    const a = (halfDeg * Math.PI) / 180;
+    ctx.fillStyle = fill;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, r, -Math.PI / 2 - a, -Math.PI / 2 + a);
+    ctx.closePath();
+    ctx.fill();
+  };
+  wedge(halfFovDeg(s.halfTan), 'rgba(79, 195, 247, 0.18)');
+  wedge(FOCUS_HALF_DEG, 'rgba(255, 201, 77, 0.22)');
+
+  // Compass: tick marks every 30° around the rim, and N/E/S/W just outside it (N highlighted).
+  ctx.strokeStyle = COLORS.hudDim;
+  ctx.lineWidth = 1;
+  for (let deg = 0; deg < 360; deg += 30) {
+    const [x1, y1] = toXY(deg, deg % 90 === 0 ? 0.86 : 0.92);
+    const [x2, y2] = toXY(deg, 1);
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+  }
+  const labelFrac = 1 + fs(8) / r;
+  for (const [deg, name] of [[0, 'N'], [90, 'E'], [180, 'S'], [270, 'W']] as const) {
+    const [x, y] = toXY(deg, labelFrac);
+    label(ctx, x, y, name, fs(deg === 0 ? 11 : 9), deg === 0 ? COLORS.focus : COLORS.text, 'center', true);
+  }
+
+  // Planes, far to near so close ones draw on top; the focused one last.
+  const blinkOff = Math.floor(s.timeMs / BLINK_MS) % 2 === 1;
+  const inRange = s.planes.filter((p) => p.distanceKm <= range).sort((a, b) => b.distanceKm - a.distanceKm);
+  const focus = inRange.find((p) => p.id === focusId);
+  for (const p of [...inRange.filter((p) => p !== focus), ...(focus ? [focus] : [])]) {
+    const status = aircraftStatus(p);
+    if (status === 'emergency' && blinkOff) continue;
+    const [x, y] = toXY(p.bearingDeg, p.distanceKm / range);
+    ctx.fillStyle = p === focus ? COLORS.focus : STATUS_COLORS[status];
+    ctx.beginPath();
+    ctx.arc(x, y, p === focus ? 3.2 : 2.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // You.
+  ctx.fillStyle = COLORS.text;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // Range below the disc, outside the ring of N/E/S/W labels.
+  label(ctx, cx, cy + r + fs(20), `${range} km`, fs(8), 'rgba(255,255,255,0.75)', 'center');
 }
 
 function drawPlanes(ctx: CanvasRenderingContext2D, w: number, h: number, s: HudState): HudResult {
