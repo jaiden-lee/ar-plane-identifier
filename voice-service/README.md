@@ -23,17 +23,20 @@ Full plane object (what the web app sends):
 ```sh
 curl -s localhost:8002/api/voice/ask -H 'content-type: application/json' -d '{
   "question": "what plane is that?",
-  "plane": {"id":"a4f2c1","callsign":"DAL1234","typeCode":"A321","typeName":"Airbus A321-200",
-            "airline":"Delta Air Lines","origin":"LGA","destination":"ATL","lat":33.7,"lon":-84.4,
-            "altitudeFt":4200,"groundSpeedKt":180,"trackDeg":185,"distanceKm":8.41,"bearingDeg":182.3}
+  "plane": {"id":"a4f2c1","callsign":"DAL591","typeCode":"B752","typeName":"Boeing 757-200",
+            "airline":"Delta Air Lines","origin":"LAS","destination":"ATL","lat":33.7,"lon":-84.4,
+            "altitudeFt":5525,"groundSpeedKt":230,"trackDeg":90,"distanceKm":8.15,"bearingDeg":182.3,
+            "offsetDeg":-22,"kind":"plane","onGround":false,"category":"A4",
+            "emergency":null,"military":false,"medical":false}
 }'
 ```
 
-Shortcut: just an id or callsign, resolved from `shared/fixtures/demo-planes.json`:
+Shortcut: just an id or callsign, resolved from `shared/fixtures/demo-planes.json`
+(try `GRDIAN1` for a medical helicopter, `DAL2948` for a plane on the ground):
 
 ```sh
 curl -s localhost:8002/api/voice/ask -H 'content-type: application/json' \
-  -d '{"question": "where is it going?", "planeId": "DAL1234"}'
+  -d '{"question": "where is it going?", "planeId": "DAL591"}'
 ```
 
 No plane in view:
