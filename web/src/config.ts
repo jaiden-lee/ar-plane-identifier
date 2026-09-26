@@ -53,6 +53,8 @@ export type Settings = {
   dataMode: DataMode;
   /** "Hey Grok" voice assistant (Allison's module in src/voice/). */
   voiceEnabled: boolean;
+  /** Plane search radius. null = flight-service's defaults (15 km live, 40 km demo). */
+  radiusKm: number | null;
 };
 
 export type DataMode = 'demo' | 'live' | 'fixture';
@@ -68,6 +70,7 @@ export const DEFAULT_SETTINGS: Settings = {
   cameraId: '',
   dataMode: 'demo',
   voiceEnabled: true,
+  radiusKm: null,
 };
 
 const STORAGE_KEY = 'ar-plane-settings-v4';

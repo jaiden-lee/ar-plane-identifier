@@ -28,6 +28,7 @@ const ipdInput = document.getElementById('ipd-input') as HTMLInputElement;
 const cameraSelect = document.getElementById('camera-select') as HTMLSelectElement;
 const dataSelect = document.getElementById('data-select') as HTMLSelectElement;
 const voiceCheck = document.getElementById('voice-check') as HTMLInputElement;
+const radiusInput = document.getElementById('radius-input') as HTMLInputElement;
 const startBtn = document.getElementById('start-btn') as HTMLButtonElement;
 const startStatus = document.getElementById('start-status')!;
 const stereoEl = document.getElementById('stereo')!;
@@ -80,6 +81,7 @@ async function initStartScreen() {
   ipdInput.value = String(settings.ipdMm);
   dataSelect.value = DATA_OVERRIDE ?? settings.dataMode;
   voiceCheck.checked = settings.voiceEnabled;
+  radiusInput.value = settings.radiusKm == null ? '' : String(settings.radiusKm);
   await refreshCameraList();
 
   if (DEV) startStatus.textContent = 'Dev mode: ← → turn (hold Shift for 10°).';
@@ -96,6 +98,13 @@ async function refreshCameraList() {
   cameraSelect.value = cams.some((c) => c.deviceId === settings.cameraId) ? settings.cameraId : '';
 }
 
+/** Blank or invalid = null (use flight-service's default radius). Clamped to what the service accepts. */
+function parseRadius(value: string): number | null {
+  const r = Number(value);
+  if (!value.trim() || !Number.isFinite(r) || r <= 0) return null;
+  return Math.min(400, Math.round(r));
+}
+
 function readSettingsFromForm() {
   const ipd = Number(ipdInput.value);
   settings = {
@@ -105,7 +114,9 @@ function readSettingsFromForm() {
     cameraId: cameraSelect.value,
     dataMode: dataSelect.value as DataMode,
     voiceEnabled: voiceCheck.checked,
+    radiusKm: parseRadius(radiusInput.value),
   };
+  radiusInput.value = settings.radiusKm == null ? '' : String(settings.radiusKm);
   saveSettings(settings);
 }
 
@@ -256,10 +267,11 @@ async function start() {
       feed = startLiveFeed({
         demo,
         getPosition: () => gps?.get() ?? null,
+        radiusKm: settings.radiusKm,
         getHeading: currentHeading,
       });
     } else {
-      feed = startFixtureFeed();
+      feed = startFixtureFeed(settings.radiusKm);
     }
 
     view = createStereoView(stereoEl, stream);

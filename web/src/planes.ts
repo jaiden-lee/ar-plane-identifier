@@ -55,23 +55,30 @@ export type PlaneFeed = {
 const FIXTURE = fixture as unknown as FlightsResponse;
 export const FIXTURE_CENTER: LatLon = FIXTURE.center;
 
+/** Planes within `radiusKm` (all of them if null). */
+function withinRadius(planes: Plane[], radiusKm: number | null): Plane[] {
+  return radiusKm == null ? planes : planes.filter((p) => p.distanceKm <= radiusKm);
+}
+
 /** Static planes from shared/fixtures/demo-planes.json. Bearings are relative to the fixture center. */
-export function startFixtureFeed(): PlaneFeed {
-  const state: FeedState = { planes: FIXTURE.planes, status: 'fixture' };
+export function startFixtureFeed(radiusKm: number | null = null): PlaneFeed {
+  const state: FeedState = { planes: withinRadius(FIXTURE.planes, radiusKm), status: 'fixture' };
   return { get: () => state, stop: () => {} };
 }
 
 const POLL_MS = 1000;
 
 /**
- * Polls GET /api/flights/nearby. The search radius is left to flight-service's defaults.
- * Always asks for fovDeg=360: the web app does the per-frame
+ * Polls GET /api/flights/nearby. Sends `radiusKm` only if the user set one on the start screen;
+ * otherwise flight-service's defaults apply. Always asks for fovDeg=360: the web app does the per-frame
  * cone filter itself (labels, off-screen arrows), so it needs every plane in range.
  * On failure it keeps showing the last good data. In demo mode, if the service has never
  * answered, it shows the fixture (same demo location) so the sky is never empty on stage.
  */
 export function startLiveFeed(opts: {
   demo: boolean;
+  /** null = let flight-service pick (15 km live, 40 km demo). */
+  radiusKm: number | null;
   getPosition: () => LatLon | null;
   getHeading: () => number | null;
 }): PlaneFeed {
@@ -92,6 +99,7 @@ export function startLiveFeed(opts: {
       });
       const heading = opts.getHeading();
       if (heading != null) params.set('heading', heading.toFixed(1));
+      if (opts.radiusKm != null) params.set('radiusKm', String(opts.radiusKm));
       try {
         const res = await fetch(`/api/flights/nearby?${params}`);
         if (!res.ok) throw new Error(String(res.status));
@@ -100,7 +108,7 @@ export function startLiveFeed(opts: {
         state.status = `live${data.demo ? ' demo' : ''} · ${data.planes.length} planes`;
       } catch {
         if (opts.demo && state.planes.length === 0) {
-          state.planes = FIXTURE.planes;
+          state.planes = withinRadius(FIXTURE.planes, opts.radiusKm);
           state.status = 'service offline · showing fixture';
         } else {
           state.status = `service offline · ${state.planes.length} cached`;
