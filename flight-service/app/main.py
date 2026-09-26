@@ -11,7 +11,7 @@ from .normalize import normalize
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("flight-service")
 
-DEFAULT_RADIUS_KM = 12  # ~7.5 miles
+DEFAULT_RADIUS_KM = 15  # ~9.3 miles
 KM_PER_NM = 1.852
 
 app = FastAPI(title="flight-service")

@@ -23,7 +23,7 @@ We don't do any computer vision. We use the phone's sensors plus geometry:
 
 1. **Inputs:** user's GPS position (lat/lon) and the compass heading the camera is pointing (degrees clockwise from north).
 2. **View cone:** two rays from the user at `heading − fov/2` and `heading + fov/2`, where `fov` is the **horizontal field of view of what's shown in each eye** (so labels line up with the camera image). The browser can't report camera FOV, so it's a calibrated config constant.
-3. **Nearby planes:** fetch all aircraft within a radius of the user. flight-service owns the radius: **12 km** live (`DEFAULT_RADIUS_KM`), **40 km** in demo mode (`DEMO_RADIUS_KM`); the web app doesn't send `radiusKm`.
+3. **Nearby planes:** fetch all aircraft within a radius of the user. flight-service owns the radius: **15 km** live (`DEFAULT_RADIUS_KM`), **40 km** in demo mode (`DEMO_RADIUS_KM`); the web app doesn't send `radiusKm`.
 4. **Filter:** for each plane, take the bearing from the user to the plane. If it falls between the two rays, the plane is "in view".
 5. **Display:** a plane/helicopter icon on the compass bar for every aircraft in view (oriented by its direction of travel relative to your line of sight, smaller when farther away, **colored by status**: see [Aircraft status colors](#aircraft-status-colors)); the info card only for the closest plane **if it's within ±7.5° of center** (the "focus cone", 15° total). Screen x uses a pinhole projection: `x = eyeCenterX + tan(angleDiff) / tan(fov/2) * (eyeWidth/2)`.
 
@@ -287,4 +287,4 @@ Run with `npm run dev` in `web/` plus `ngrok http 5173`.
 
 ## Voice service notes
 
-Status, decisions, gotchas, and the browser-module plan for the voice workstream live in [`voice-service/CLAUDE.md`](voice-service/CLAUDE.md). Read that before touching `voice-service/` or `web/src/voice/`. Headline: the LLM behind `/api/voice/ask` is currently **Gemini** (free tier), not Grok; the provider is swappable via env vars and the contract is unchanged.
+Status, decisions, gotchas, and the browser-module plan for the voice workstream live in [`voice-service/CLAUDE.md`](voice-service/CLAUDE.md). Read that before touching `voice-service/` or `web/src/voice/`. Headline: the LLM behind `/api/voice/ask` is now **Grok** (`grok-4.3` via `https://api.x.ai/v1`, `XAI_REASONING_EFFORT=none` for ~0.9 s answers; `grok-4-fast` was retired by xAI on 2026-05-15). The provider is swappable via env vars (Gemini still works: leave `XAI_REASONING_EFFORT` unset) and the contract is unchanged.

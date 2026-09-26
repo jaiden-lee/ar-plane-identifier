@@ -53,7 +53,7 @@ NOTIONAL = [
     fake_ac("aaa004", "AAL400", 16.0, 3.0),    # just outside a 30-degree cone at heading=0
     fake_ac("aaa005", "FFT500", 180.0, 10.0),  # due south (toward ATL)
     fake_ac("aaa006", "N12345", 185.0, 2.0, t="C172", alt_baro="ground"),
-    fake_ac("aaa007", "JBU700", 90.0, 30.0),   # east, beyond the 12 km default radius
+    fake_ac("aaa007", "JBU700", 90.0, 30.0),   # east, beyond the 15 km default radius
     fake_ac("aaa008", None, 270.0, 6.0, t=None),  # no callsign / type at all
     {"hex": "aaa009", "flight": "BAD999  "},    # no position -> must be dropped
     fake_ac("aaa001", "DAL100", 0.0, 5.0),     # duplicate hex -> must be deduped
@@ -121,7 +121,7 @@ def test_endpoint() -> None:
     check("Plane keys match contract", all(set(p) == PLANE_KEYS for p in body["planes"]))
     check("no position -> dropped", "aaa009" not in ids)
     check("duplicate hex deduped", ids.count("aaa001") == 1)
-    check("beyond 12 km radius dropped", "aaa007" not in ids)
+    check("beyond 15 km radius dropped", "aaa007" not in ids)
     check("7 planes total", len(ids) == 7, str(ids))
     dists = [p["distanceKm"] for p in body["planes"]]
     check("sorted by distance", dists == sorted(dists), str(dists))

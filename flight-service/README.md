@@ -19,7 +19,7 @@ uvicorn app.main:app --port 8001 --reload
 | Param | Default | Notes |
 |---|---|---|
 | `lat`, `lon` | required unless `demo=1` | user position |
-| `radiusKm` | 16.09 (10 mi); 40 in demo | |
+| `radiusKm` | 15 (~9.3 mi); 40 in demo | The web app never sends it, so these defaults apply |
 | `heading` | none | true-north degrees. If set, only planes inside the view cone are returned |
 | `fovDeg` | 30 | total cone width (in cone if `abs(diff) <= fovDeg/2`) |
 | `demo` | 0 | 1 = pinned to Georgia Tech + frozen snapshot (`data/demo-snapshot.json`), no network |
