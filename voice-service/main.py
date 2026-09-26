@@ -15,8 +15,10 @@ import os
 from pathlib import Path
 from typing import Any, Optional
 
+import httpx2 as httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 load_dotenv(Path(__file__).parent / ".env")
@@ -30,6 +32,11 @@ XAI_BASE_URL = os.getenv("XAI_BASE_URL", "https://api.x.ai/v1")
 # Optional: "none" | "low" | "medium" | "high". grok-4.3 defaults to "low"; "none" answers fastest.
 # Leave unset for providers that don't support it (e.g. Gemini).
 XAI_REASONING_EFFORT = os.getenv("XAI_REASONING_EFFORT", "").strip()
+# Grok text-to-speech (https://docs.x.ai/developers/model-capabilities/audio/text-to-speech).
+# Always talks to xAI, even if chat is pointed at another provider; needs an xAI key.
+XAI_TTS_URL = os.getenv("XAI_TTS_URL", "https://api.x.ai/v1/tts")
+XAI_TTS_API_KEY = os.getenv("XAI_TTS_API_KEY", "") or (XAI_API_KEY if "x.ai" in XAI_BASE_URL else "")
+XAI_TTS_VOICE = os.getenv("XAI_TTS_VOICE", "leo")  # eve | ara | leo | rex | sal
 FIXTURE_PATH = Path(__file__).parent.parent / "shared" / "fixtures" / "demo-planes.json"
 
 # ---------------------------------------------------------------------------
@@ -74,6 +81,10 @@ class AskRequest(BaseModel):
 
 class AskResponse(BaseModel):
     answer: str
+
+
+class SpeakRequest(BaseModel):
+    text: str
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +263,42 @@ app = FastAPI(title="voice-service")
 
 @app.get("/api/voice/health")
 async def health() -> dict[str, Any]:
-    return {"ok": True, "model": XAI_MODEL, "reasoningEffort": XAI_REASONING_EFFORT or None, "hasKey": bool(XAI_API_KEY)}
+    return {
+        "ok": True,
+        "model": XAI_MODEL,
+        "reasoningEffort": XAI_REASONING_EFFORT or None,
+        "hasKey": bool(XAI_API_KEY),
+        "ttsVoice": XAI_TTS_VOICE if XAI_TTS_API_KEY else None,
+    }
+
+
+@app.post("/api/voice/speak")
+async def speak(req: SpeakRequest) -> Response:
+    """Text -> MP3 in Grok's voice. The browser falls back to speechSynthesis on any non-200."""
+    text = req.text.strip()[:2000]
+    if not text:
+        return JSONResponse({"error": "empty text"}, status_code=400)
+    if not XAI_TTS_API_KEY:
+        return JSONResponse({"error": "no xAI key for TTS"}, status_code=503)
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(
+                XAI_TTS_URL,
+                headers={"Authorization": f"Bearer {XAI_TTS_API_KEY}"},
+                json={
+                    "text": text,
+                    "voice_id": XAI_TTS_VOICE,
+                    "language": "en",
+                    "optimize_streaming_latency": 2,
+                },
+            )
+        if r.status_code != 200:
+            log.warning("TTS %s: %s", r.status_code, r.text[:200])
+            return JSONResponse({"error": f"tts upstream {r.status_code}"}, status_code=503)
+        return Response(content=r.content, media_type="audio/mpeg", headers={"Cache-Control": "no-store"})
+    except Exception as e:  # noqa: BLE001
+        log.warning("TTS failed: %s", e)
+        return JSONResponse({"error": "tts failed"}, status_code=503)
 
 
 @app.post("/api/voice/ask", response_model=AskResponse)

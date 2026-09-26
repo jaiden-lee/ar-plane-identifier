@@ -29,8 +29,9 @@ sent once the user has been **quiet for 1.3 s** (`endOfQuestionSilenceMs`), not 
 All phrases after the wake word are joined; interim results count as speech and push the deadline
 back. Caps: 8 s to start talking after "hey grok" (`questionTimeoutMs`), 15 s total
 (`maxQuestionMs`). Fuzzy matching
-covers "grock", "rock", "croc", "a grok", etc. The answer is spoken with `speechSynthesis`
-and passed to `onAnswer` for the HUD. While the phone is speaking, the mic is paused so it
+covers "grock", "rock", "croc", "a grok", etc. The answer is spoken in **Grok's "Leo" voice** (audio fetched
+from `/api/voice/speak`, falling back to the browser's `speechSynthesis` if that fails) and
+passed to `onAnswer` for the HUD. Pass `ttsEndpoint: null` to force the browser voice. While the phone is speaking, the mic is paused so it
 doesn't hear itself. If the voice service is down, the module speaks a short offline line
 and keeps running.
 
@@ -39,7 +40,7 @@ and keeps running.
 - `index.ts` — `startVoice()`: state machine, wake handling, fetch, TTS orchestration
 - `wake.ts` — fuzzy "hey grok" matcher (pure function, `matchWake(text)`)
 - `recognition.ts` — Chrome `SpeechRecognition` wrapper with auto-restart
-- `tts.ts` — `speechSynthesis` wrapper (`unlockSpeech`, `speak`)
+- `tts.ts` — `speakRemote` (Grok audio via the service) + `speak` (browser fallback), `unlockSpeech`
 - `types.ts` — `Plane`, `VoiceState`, options, `Recognizer` interface
 - `dev.html` / `dev.ts` — desktop test page, not part of the app
 
@@ -60,4 +61,8 @@ speech recognition (desktop Chrome works for a smoke test; Android Chrome is the
 - Chrome stops continuous recognition after a few seconds of silence; the wrapper restarts
   it ~150 ms later. Expect a small gap where a wake phrase can be missed.
 - Recognition needs network (Google's servers), so it fails on ngrok if the phone's data is off.
-- Must be started from a user gesture. Jaiden's Start tap is that gesture.
+- Must be started from a user gesture. Jaiden's Start tap is that gesture. It also "unlocks" the
+  `<audio>` element used for Grok's voice; if `startVoice` runs outside a gesture, remote audio
+  may be blocked and the module falls back to the browser voice.
+- Grok audio adds ~1.5 s before the answer starts (fetch whole MP3, then play). Streaming
+  playback via xAI's WebSocket TTS would cut that; not done.

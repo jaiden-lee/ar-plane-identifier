@@ -46,8 +46,13 @@ export type StartVoiceOptions = {
   endOfQuestionSilenceMs?: number;
   /** Hard cap on how long one question can run before it's sent anyway (ms). Default 15000. */
   maxQuestionMs?: number;
-  /** Read answers aloud with speechSynthesis. Default true. */
+  /** Read answers aloud. Default true. */
   speak?: boolean;
+  /**
+   * Endpoint that returns the answer as audio in Grok's voice; default '/api/voice/speak'.
+   * Falls back to the browser's speechSynthesis if it fails. Pass null to always use the browser voice.
+   */
+  ttsEndpoint?: string | null;
   /** Override the recognizer (used by the dev page to fake transcripts). */
   recognizer?: Recognizer;
 };

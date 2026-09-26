@@ -9,7 +9,7 @@
 
 import { matchWake } from './wake';
 import { createBrowserRecognizer, isSpeechRecognitionSupported } from './recognition';
-import { speak, stopSpeaking, unlockSpeech } from './tts';
+import { speak, speakRemote, stopSpeaking, unlockSpeech } from './tts';
 import type { Plane, Recognizer, StartVoiceOptions, VoiceHandle, VoiceState } from './types';
 
 export type { Plane, Recognizer, StartVoiceOptions, VoiceHandle, VoiceState } from './types';
@@ -23,6 +23,7 @@ export function startVoice(opts: StartVoiceOptions): VoiceHandle {
   const lang = opts.lang ?? 'en-US';
   const questionTimeoutMs = opts.questionTimeoutMs ?? 8000;
   const shouldSpeak = opts.speak ?? true;
+  const ttsEndpoint = opts.ttsEndpoint === undefined ? '/api/voice/speak' : opts.ttsEndpoint;
 
   const silenceMs = opts.endOfQuestionSilenceMs ?? 1300;
   const maxQuestionMs = opts.maxQuestionMs ?? 15000;
@@ -132,7 +133,8 @@ export function startVoice(opts: StartVoiceOptions): VoiceHandle {
       setState('speaking');
       // Don't let the mic hear the phone talking to itself.
       recognizer?.stop();
-      await speak(answer, lang);
+      const spokenByGrok = ttsEndpoint ? await speakRemote(answer, ttsEndpoint) : false;
+      if (!spokenByGrok && !stopped) await speak(answer, lang);
       if (stopped) return;
       recognizer?.start();
     }

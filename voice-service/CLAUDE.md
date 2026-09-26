@@ -12,6 +12,7 @@ and `web/src/voice/` only; do not edit other paths.
 | 2 | Browser module `web/src/voice/` (wake phrase, STT, TTS) | 🟡 Built + tested with fake mic; needs a real-phone test |
 | 3 | Head-tilt fallback trigger | 🟡 `voice.listen()` hook exists; tilt detection not wired |
 | 4 | Prompt tuning for short, fun, accurate spoken answers | 🟡 Flight phase + helicopters fixed; tune tone on the phone |
+| 5 | Grok "Leo" voice for answers (stretch) | 🟡 Built + tested via curl/Node; needs a phone test |
 
 ## Decisions
 
@@ -47,6 +48,17 @@ and `web/src/voice/` only; do not edit other paths.
 5. `GET /api/voice/health` reports the model and whether a key is loaded.
 
 Run and curl instructions are in `README.md`. The key lives in `.env` (gitignored).
+
+## Grok voice (added 2026-09-26)
+
+- `POST /api/voice/speak` `{text}` → `audio/mpeg` from xAI TTS (`https://api.x.ai/v1/tts`,
+  `voice_id` = `XAI_TTS_VOICE`, default **leo**; `optimize_streaming_latency: 2`). Non-200 on
+  any failure so the browser falls back to `speechSynthesis`. $15 / 1M chars.
+- Browser: `tts.ts` `speakRemote()` fetches the MP3 and plays it through one `<audio>` element
+  created in `unlockSpeech()` during the Start tap. `index.ts` tries remote, then browser.
+- Measured: 1.3–2.0 s per sentence from the service. Total ask → first sound is ~2.5–3 s.
+  If that feels slow on stage, the xAI WebSocket TTS streams audio as it's generated.
+- **Not yet tested on the Pixel** (audio unlock + playback need the real gesture path).
 
 ## Known gaps / TODO
 
