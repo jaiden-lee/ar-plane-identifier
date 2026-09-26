@@ -34,9 +34,15 @@ curl "localhost:8001/api/flights/nearby?lat=33.7756&lon=-84.3963&heading=180"
 
 ## Data sources
 
-- Positions: `https://api.adsb.lol/v2/point/{lat}/{lon}/{nm}` (cached 3 s). Requires a non-default User-Agent (adsb.lol 403s `python-httpx`).
+- Positions: `https://api.adsb.lol/v2/point/{lat}/{lon}/{nm}` (cached 1 s, matching the web app's 1 s polling). Requires a non-default User-Agent (adsb.lol 403s `python-httpx`).
 - Routes: `POST https://adsb.im/api/0/routeset` (the `api.adsb.lol` mirror currently returns empty responses). Cached per callsign for 30 min. Only `plausible` routes are used. For multi-leg routes, the leg the plane is currently flying is chosen by position.
 - `typeName` and `airline` come from small lookup tables in `app/normalize.py`.
+- Status fields, also in `app/normalize.py`:
+  - `kind`: `'helicopter'` if ADS-B category `A7` or a known helicopter type code, else `'plane'`.
+  - `onGround`: `alt_baro == "ground"`.
+  - `emergency`: readsb `emergency` status (`general`, `minfuel`, `nordo`, `unlawful`, `downed`), else from squawk 7500/7600/7700; `null` if none.
+  - `military`: adsb.lol `dbFlags` bit 1.
+  - `medical`: `emergency == "lifeguard"` (medical-priority flight, **not** reported as an emergency) or an air-ambulance callsign prefix (`GRDIAN`, `LIFE`, `MEDEVAC`, ...). There's no reliable ADS-B medical flag, so this is best-effort.
 
 ## Test scripts
 

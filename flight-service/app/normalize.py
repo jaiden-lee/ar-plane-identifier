@@ -52,6 +52,53 @@ TYPE_NAMES = {
 }
 
 
+# ICAO type designators for helicopters, for aircraft that don't broadcast category A7.
+HELICOPTER_TYPES = {
+    "EC20", "EC30", "EC35", "EC45", "EC55", "EC75", "H160", "H175", "BK17",
+    "AS32", "AS50", "AS55", "AS65", "A109", "A119", "A139", "A169", "A189",
+    "B06", "B06T", "B407", "B412", "B429", "B505", "UH1", "H60", "H47", "H64",
+    "S76", "S92", "R22", "R44", "R66", "H500", "MD52", "MD60", "EN28", "EN48",
+}
+
+
+def _kind(category: str | None, type_code: str | None) -> str:
+    """'helicopter' if the ADS-B emitter category is A7 (rotorcraft) or the type is a known helicopter."""
+    if category == "A7" or (type_code and type_code in HELICOPTER_TYPES):
+        return "helicopter"
+    return "plane"
+
+
+# readsb `emergency` values that mean a real emergency. "lifeguard" is a medical-priority flight,
+# not an emergency, so it's reported as medical instead.
+EMERGENCY_STATUSES = {"general", "minfuel", "nordo", "unlawful", "downed"}
+# Emergency squawk codes, used when the emergency field isn't set.
+EMERGENCY_SQUAWKS = {"7500": "unlawful", "7600": "nordo", "7700": "general"}
+# Air-ambulance callsign prefixes (there's no reliable "medical" flag in ADS-B besides lifeguard).
+MEDICAL_CALLSIGN_PREFIXES = (
+    "GRDIAN", "LIFE", "MEDIC", "MEDEVAC", "EVAC", "ANGEL", "AIRMED", "CAREFLT", "MERCY", "MEDSTAR",
+)
+# adsb.lol dbFlags bit for military aircraft.
+DBFLAG_MILITARY = 1
+
+
+def _emergency(ac: dict) -> str | None:
+    status = (ac.get("emergency") or "").strip().lower()
+    if status in EMERGENCY_STATUSES:
+        return status
+    return EMERGENCY_SQUAWKS.get(str(ac.get("squawk") or "").strip())
+
+
+def _medical(ac: dict, callsign: str | None) -> bool:
+    if (ac.get("emergency") or "").strip().lower() == "lifeguard":
+        return True
+    return bool(callsign) and callsign.upper().startswith(MEDICAL_CALLSIGN_PREFIXES)
+
+
+def _military(ac: dict) -> bool:
+    flags = ac.get("dbFlags")
+    return isinstance(flags, int) and bool(flags & DBFLAG_MILITARY)
+
+
 def _num(v) -> float | None:
     return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
 
@@ -63,6 +110,7 @@ def normalize(ac: dict, center_lat: float, center_lon: float) -> dict | None:
 
     callsign = (ac.get("flight") or "").strip() or None
     type_code = (ac.get("t") or "").strip().upper() or None
+    category = (ac.get("category") or "").strip().upper() or None
     alt = ac.get("alt_baro")
     altitude_ft = 0.0 if alt == "ground" else _num(alt)
 
@@ -76,6 +124,12 @@ def normalize(ac: dict, center_lat: float, center_lon: float) -> dict | None:
         "registration": (ac.get("r") or "").strip() or None,
         "typeCode": type_code,
         "typeName": TYPE_NAMES.get(type_code) if type_code else None,
+        "category": category,
+        "kind": _kind(category, type_code),
+        "onGround": alt == "ground",
+        "emergency": _emergency(ac),
+        "military": _military(ac),
+        "medical": _medical(ac, callsign),
         "airline": airline,
         "origin": None,
         "destination": None,

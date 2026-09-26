@@ -16,7 +16,7 @@ TIMEOUT = httpx.Timeout(5.0)
 # adsb.lol 403s the default python-httpx User-Agent.
 HEADERS = {"User-Agent": "ar-plane-identifier/0.1 (hackathon)"}
 
-_point_cache = TTLCache(ttl_s=3.0)
+_point_cache = TTLCache(ttl_s=1.0)  # matches the web app polling every 1 s
 _route_cache = TTLCache(ttl_s=30 * 60)  # callsign -> (origin, destination), (None, None) if unknown
 
 

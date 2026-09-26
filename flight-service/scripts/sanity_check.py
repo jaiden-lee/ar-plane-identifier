@@ -23,6 +23,7 @@ CENTER = (33.7756, -84.3963)  # Georgia Tech
 PLANE_KEYS = {
     "id", "callsign", "registration", "typeCode", "typeName", "airline", "origin", "destination",
     "lat", "lon", "altitudeFt", "groundSpeedKt", "trackDeg", "distanceKm", "bearingDeg",
+    "category", "kind", "onGround", "emergency", "military", "medical",
 }
 
 
@@ -47,12 +48,12 @@ def fake_ac(hex_: str, flight: str | None, bearing: float, dist_km: float, **ext
 # (hex, callsign, bearing, distance km) -- notional traffic around the center
 NOTIONAL = [
     fake_ac("aaa001", "DAL100", 0.0, 5.0),     # due north, close
-    fake_ac("aaa002", "UAL200", 10.0, 12.0),   # north, in a heading=0 cone
+    fake_ac("aaa002", "UAL200", 10.0, 11.0),   # north, in a heading=0 cone
     fake_ac("aaa003", "SWA300", 350.0, 8.0),   # just west of north, crosses 0/360 wrap
     fake_ac("aaa004", "AAL400", 16.0, 3.0),    # just outside a 30-degree cone at heading=0
-    fake_ac("aaa005", "FFT500", 180.0, 15.0),  # due south (toward ATL)
+    fake_ac("aaa005", "FFT500", 180.0, 10.0),  # due south (toward ATL)
     fake_ac("aaa006", "N12345", 185.0, 2.0, t="C172", alt_baro="ground"),
-    fake_ac("aaa007", "JBU700", 90.0, 30.0),   # east, beyond the 16 km default radius
+    fake_ac("aaa007", "JBU700", 90.0, 30.0),   # east, beyond the 12 km default radius
     fake_ac("aaa008", None, 270.0, 6.0, t=None),  # no callsign / type at all
     {"hex": "aaa009", "flight": "BAD999  "},    # no position -> must be dropped
     fake_ac("aaa001", "DAL100", 0.0, 5.0),     # duplicate hex -> must be deduped
@@ -120,7 +121,7 @@ def test_endpoint() -> None:
     check("Plane keys match contract", all(set(p) == PLANE_KEYS for p in body["planes"]))
     check("no position -> dropped", "aaa009" not in ids)
     check("duplicate hex deduped", ids.count("aaa001") == 1)
-    check("beyond 16 km radius dropped", "aaa007" not in ids)
+    check("beyond 12 km radius dropped", "aaa007" not in ids)
     check("7 planes total", len(ids) == 7, str(ids))
     dists = [p["distanceKm"] for p in body["planes"]]
     check("sorted by distance", dists == sorted(dists), str(dists))
@@ -134,7 +135,8 @@ def test_endpoint() -> None:
     check("no route -> nulls", by_id["aaa005"]["origin"] is None)
     check("nulls handled", by_id["aaa008"]["callsign"] is None and by_id["aaa008"]["typeName"] is None)
     check("bearing ~180 for south plane", abs(by_id["aaa005"]["bearingDeg"] - 180) < 0.1)
-    check("distance ~15 km for south plane", abs(by_id["aaa005"]["distanceKm"] - 15) < 0.05)
+    check("distance ~10 km for south plane", abs(by_id["aaa005"]["distanceKm"] - 10) < 0.05)
+    check("ground plane flagged onGround", by_id["aaa006"]["onGround"] is True and by_id["aaa001"]["onGround"] is False)
 
     ids0 = [p["id"] for p in client.get(base + "&heading=0").json()["planes"]]
     check("heading=0 cone: N planes incl. across wrap", ids0 == ["aaa001", "aaa003", "aaa002"], str(ids0))
@@ -156,6 +158,26 @@ def test_endpoint() -> None:
     check("demo snapshot has planes", len(demo["planes"]) > 0, "run scripts/capture_snapshot.py")
 
 
+def test_status_fields() -> None:
+    print("status fields (kind / emergency / military / medical)")
+    from app.normalize import normalize
+
+    n = lambda **extra: normalize(fake_ac("bbb001", extra.pop("flight", "DAL1"), 0.0, 5.0, **extra), *CENTER)  # noqa: E731
+    plain = n()
+    check("plain airliner: no flags", (plain["kind"], plain["onGround"], plain["emergency"], plain["military"], plain["medical"]) == ("plane", False, None, False, False))
+    check("category A7 -> helicopter", n(category="A7", t=None)["kind"] == "helicopter")
+    check("R44 type w/o category -> helicopter", n(t="R44")["kind"] == "helicopter")
+    check("emergency status passed through", n(emergency="general")["emergency"] == "general")
+    check("emergency 'none' -> null", n(emergency="none")["emergency"] is None)
+    check("squawk 7700 -> general", n(squawk="7700")["emergency"] == "general")
+    check("squawk 7600 -> nordo", n(squawk="7600")["emergency"] == "nordo")
+    life = n(emergency="lifeguard")
+    check("lifeguard -> medical, not emergency", life["medical"] is True and life["emergency"] is None)
+    check("air-ambulance callsign -> medical", n(flight="GRDIAN1")["medical"] is True)
+    check("dbFlags bit 1 -> military", n(dbFlags=1)["military"] is True)
+    check("dbFlags 8 (LADD) -> not military", n(dbFlags=8)["military"] is False)
+
+
 def test_upstream_failure() -> None:
     print("upstream failure (real fetch_point, unreachable host)")
     import importlib
@@ -170,6 +192,7 @@ if __name__ == "__main__":
     test_geo()
     test_route_parsing()
     test_endpoint()
+    test_status_fields()
     test_upstream_failure()
     print(f"\n{'ALL PASSED' if failures == 0 else f'{failures} FAILED'}")
     sys.exit(1 if failures else 0)

@@ -11,7 +11,7 @@ Hackathon project (built Fri 2026-09-25 → Sat 2026-09-26). Team: **Jaiden, Wes
 Point your phone (in a Google Cardboard headset) at a plane in the sky, and see a label telling you what it is: flight number, aircraft model, origin → destination, etc.
 
 - The phone shows a **stereo view**: two identical side-by-side camera previews, one per eye, so it works in Cardboard.
-- A "headband" **compass bar** near the top of the view (drawn identically in both halves) shows a diamond for every plane in view, **positioned at the plane's real direction**.
+- A "headband" **compass bar** near the top of the view (drawn identically in both halves) shows a **plane or helicopter icon** for every aircraft in view, **positioned at its real direction**.
 - The plane you're looking at (within ±7.5° of center) gets an **info card** that drops down right under the compass. The middle of the view stays clear.
 - Flight data comes from **adsb.lol** (free ADS-B API).
 
@@ -25,7 +25,7 @@ We don't do any computer vision. We use the phone's sensors plus geometry:
 2. **View cone:** two rays from the user at `heading − fov/2` and `heading + fov/2`, where `fov` is the **horizontal field of view of what's shown in each eye** (so labels line up with the camera image). The browser can't report camera FOV, so it's a calibrated config constant.
 3. **Nearby planes:** fetch all aircraft within a radius of the user. flight-service owns the radius: **12 km** live (`DEFAULT_RADIUS_KM`), **40 km** in demo mode (`DEMO_RADIUS_KM`); the web app doesn't send `radiusKm`.
 4. **Filter:** for each plane, take the bearing from the user to the plane. If it falls between the two rays, the plane is "in view".
-5. **Display:** a diamond on the compass bar for every plane in view; the info card only for the closest plane **if it's within ±7.5° of center** (the "focus cone", 15° total). Screen x uses a pinhole projection: `x = eyeCenterX + tan(angleDiff) / tan(fov/2) * (eyeWidth/2)`.
+5. **Display:** a plane/helicopter icon on the compass bar for every aircraft in view (oriented by its direction of travel relative to your line of sight, smaller when farther away, **colored by status**: see [Aircraft status colors](#aircraft-status-colors)); the info card only for the closest plane **if it's within ±7.5° of center** (the "focus cone", 15° total). Screen x uses a pinhole projection: `x = eyeCenterX + tan(angleDiff) / tan(fov/2) * (eyeWidth/2)`.
 
 ### 2D simplification
 
@@ -74,7 +74,7 @@ Phone browser (web app, via ngrok HTTPS)
 
 - The web app's dev server **proxies** `/api/flights/*` and `/api/voice/*` to the two services. Result: **one ngrok tunnel**, no CORS issues.
 - **Division of math:** the flight service takes the user's lat/lon/heading, computes each plane's `bearingDeg`, `distanceKm` and `offsetDeg`, and does the cone filter. Between polls the web app re-positions labels every frame from `bearingDeg` + its live heading (the head moves faster than we poll), so `bearingDeg` must always be present.
-- The web app polls `/api/flights/nearby` every ~1–3 s. The service should cache adsb.lol upstream (refresh every few seconds) so frequent polls are cheap.
+- **Update rate: 1 s everywhere.** The web app polls `/api/flights/nearby` every **1 s** (next poll starts 1 s after the previous one finishes, so slow responses never pile up). flight-service caches adsb.lol positions for **1 s** (`_point_cache` in `app/adsb.py`), so several phones polling still means at most ~1 upstream call per second. Routes stay cached 30 min per callsign. Demo mode polls too, but its snapshot is frozen.
 - The xAI API key lives **only** in voice-service (never in the browser).
 
 ### Repo layout and ownership
@@ -120,10 +120,37 @@ type Plane = {
   distanceKm: number;          // from the query position
   bearingDeg: number;          // from the query position, [0, 360), true north
   offsetDeg?: number;          // signed angle from the request heading, (-180, 180], negative = left
+  category: string | null;     // raw ADS-B emitter category, e.g. "A3" (large), "A7" (rotorcraft)
+  kind: 'plane' | 'helicopter'; // 'helicopter' if category A7 or a known helicopter type code
+  onGround: boolean;           // readsb alt_baro == "ground"
+  emergency: string | null;    // "general" | "minfuel" | "nordo" | "unlawful" | "downed", or null
+  military: boolean;           // adsb.lol dbFlags bit 1
+  medical: boolean;            // lifeguard status or air-ambulance callsign (best-effort)
 };
 ```
 
-Any field may be `null` except position/distance/bearing. The UI must handle missing data gracefully.
+Any field may be `null` except position/distance/bearing (and `kind`, which is always set). The UI must handle missing data gracefully.
+
+`kind` is derived in flight-service (`_kind()` in `app/normalize.py`): `category == "A7"` **or** `typeCode` in `HELICOPTER_TYPES` (catches helicopters that don't broadcast a category). Everything else is `'plane'`. The web app treats a missing `kind` as `'plane'`.
+
+Status fields are also derived in `app/normalize.py`:
+- `emergency`: readsb `emergency` status if it's a real emergency, else from squawk 7500 (`unlawful`) / 7600 (`nordo`) / 7700 (`general`). `"lifeguard"` is **not** an emergency (it's a medical-priority flight) and sets `medical` instead.
+- `military`: adsb.lol `dbFlags & 1`.
+- `medical`: `emergency == "lifeguard"` or callsign starts with an air-ambulance prefix (`MEDICAL_CALLSIGN_PREFIXES`: `GRDIAN`, `LIFE`, `MEDEVAC`, ...). ADS-B has no reliable medical flag, so this misses operators that fly under tail numbers.
+
+### Aircraft status colors
+
+The web app picks **one** status per aircraft (`aircraftStatus()` in `web/src/format.ts`), most important first:
+
+| Priority | Status | Color | Card tag |
+|---|---|---|---|
+| 1 | `emergency` set | **blinking red** (400 ms) | `EMERGENCY` / `EMERGENCY · RADIO FAILURE` / ... |
+| 2 | `onGround` | grey | `ON THE GROUND` |
+| 3 | `medical` | purple | `MEDICAL` |
+| 4 | `military` | green | `MILITARY` |
+| 5 | otherwise | HUD blue (focused: yellow) | none |
+
+The focused aircraft is larger; if it has a status color, it keeps that color with a yellow outline, and its info card's accent bar, notch and tag line use the status color. Colors live in `STATUS_COLORS` in `web/src/hud.ts`. The demo snapshot has 21 aircraft on the ground and 1 medical (`GRDIAN1`), no emergencies or military; those show up on live data.
 
 ### Flight service
 
@@ -187,7 +214,7 @@ Jaiden's app calls `startVoice` after the Start tap and renders the state indica
 **Jaiden — web app + integration**
 1. ✅ Start button → rear camera → side-by-side stereo view on Android Chrome over ngrok, with in-headset calibration (see [Web app notes](#web-app-notes)).
 2. ✅ Camera heading from device orientation (+ smoothing, declination); desktop dev mode with arrow-key heading.
-3. ✅ Cone filter + compass-bar diamonds + info card for the focused plane, using the fixture.
+3. ✅ Cone filter + compass-bar aircraft icons + info card for the focused plane, using the fixture.
 4. ✅ Hook up live flight-service (polling, Data mode on the start screen, demo fallback).
 5. ✅ Mount voice module; show listening/thinking state and answers (subtitles near the bottom of the view).
 6. Polish: ✅ FOV calibration, ✅ compass strip, ✅ off-screen arrow to the nearest plane, ✅ markers for other in-view planes; still to do: radar mini-map, then (if time) true vertical placement from altitude + phone pitch.
@@ -212,7 +239,7 @@ Jaiden's app calls `startVoice` after the Start tap and renders the state indica
 - **Demo plane layout:** planes spread around 360° (like real traffic); the off-screen arrow guides the viewer to the nearest one.
 - **Target phones:** Google **Pixel 10** (primary), Galaxy S22+ (backup), Android Chrome. iPhone 13 mini is not a demo target.
 - **Info card:** 3 compact lines: `DL 1234 · Delta Air Lines` / `Airbus A321-200 · LGA → ATL` / `4,200 ft · 180 kt · 8.4 km`. ICAO callsigns are shown with IATA codes for common airlines (`DAL1234` → `DL 1234`, map in `web/src/format.ts`).
-- **HUD layout:** everything hangs off the compass bar near the top of the view (diamonds on the bar, degree labels + heading under it, info card attached under that). Nothing in the middle of the view except the crosshair. Planes are placed horizontally only (true elevation placement is a stretch).
+- **HUD layout:** everything hangs off the compass bar near the top of the view (plane/helicopter icons on the bar, degree labels + heading under it, info card attached under that). Nothing in the middle of the view except the crosshair. Planes are placed horizontally only (true elevation placement is a stretch).
 - **Fixture:** `shared/fixtures/demo-planes.json` currently holds **synthetic** planes (correct bearings/distances from GT) so web work can start now. Wesley replaces it with a real adsb.lol snapshot of the same shape.
 
 ## Decisions still open
@@ -232,7 +259,7 @@ Code lives in `web/src/`:
 | `orientation.ts` | Rear-camera heading + pitch from sensors, smoothing, declination |
 | `geo.ts` | Angle helpers, visible-FOV estimate, pinhole projection |
 | `planes.ts` | `Plane` type, fixture feed, live flight-service feed, GPS |
-| `hud.ts` | Canvas HUD: compass bar, diamonds, info card, edge arrow. Layout constants at the top |
+| `hud.ts` | Canvas HUD: compass bar, plane/helicopter icons, info card, edge arrow, voice subtitles. Layout constants at the top |
 | `format.ts` | Info-card text, callsign formatting |
 
 Run with `npm run dev` in `web/` plus `ngrok http 5173`.
@@ -250,10 +277,11 @@ Run with `npm run dev` in `web/` plus `ngrok http 5173`.
   - **Live (GPS)**: flight-service with the phone's GPS position (asks for location permission).
   - **Offline**: `shared/fixtures/demo-planes.json` imported directly (Vite `server.fs.allow: ['..']`), no backend.
 
-  The feed polls `/api/flights/nearby` every 2 s with `fovDeg=360` (no `radiusKm`) and does the cone filter per frame from `bearingDeg` + live heading. On errors it keeps the last good data. When there are no planes at all, the HUD shows the feed status under the compass (e.g. "No planes · live · waiting for GPS").
+  The feed polls `/api/flights/nearby` every 1 s with `fovDeg=360` (no `radiusKm`) and does the cone filter per frame from `bearingDeg` + live heading. On errors it keeps the last good data. When there are no planes at all, the HUD shows the feed status under the compass (e.g. "No planes · live · waiting for GPS").
 - **Running the full stack locally:** `npm run dev` in `web/`, flight-service with `.venv/Scripts/python -m uvicorn app.main:app --host 127.0.0.1 --port 8001` in `flight-service/`, and `ngrok http 5173`. The Vite proxy targets `127.0.0.1` (not `localhost`): on Windows, `localhost` tries IPv6 first and adds ~2 s per request.
 - **In-headset calibration** (saved in localStorage) is **locked by default** so stray touches do nothing. **Double-tap the middle** to unlock, then middle tap cycles **zoom → tilt → spacing → shift → size → fov → info → locked**, left/right taps adjust. It re-locks after 6 s idle (except on info). **Tilt** matters most in practice: the phone never sits perfectly level in the headset, and a crooked phone puts one eye's image higher than the other (double crosshair). Tilt rotates the whole two-eye layout to compensate.
 - **Voice (Allison's `web/src/voice/`):** `startVoice()` is called synchronously inside the Start tap (mic + speech need the gesture), when the start screen's **Voice** checkbox is on (default). Each frame `drawHud()` returns the focused plane and in-view planes (with `offsetDeg`); the voice module reads those when a question is asked. Voice state, the question, and the answer render as subtitles near the bottom (`VOICE_Y` in `hud.ts`); answers linger 7 s after speaking. Answers are spoken by the phone's `speechSynthesis` (the LLM only returns text). Desktop dev mode: **V** = `voice.listen()` (skip the wake phrase).
+- **Fixture changes:** `vite.config.ts` explicitly watches `../shared` (it's outside the web root, so Vite otherwise keeps serving a stale copy of `demo-planes.json` after it's regenerated).
 - **HUD rule:** anything drawn on the overlay must be drawn identically in **both** eyes, or it won't fuse (text shown to one eye only flickers and is hard to read).
 - **Exiting:** **long-press (1.5 s)** returns to the start screen. Leaving fullscreen (often an accidental back-swipe from the headset edge) does *not* exit the view: a "tap to resume" hint appears and the next tap re-enters fullscreen. The back gesture is swallowed while in the view.
 
