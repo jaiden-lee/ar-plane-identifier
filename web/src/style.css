@@ -120,6 +120,14 @@ body {
   display: block;
 }
 
+.eye-vr {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
 .eye-hud {
   position: absolute;
   inset: 0;

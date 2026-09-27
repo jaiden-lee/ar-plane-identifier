@@ -17,7 +17,7 @@ export type CastCompositor = {
    * (LOGICAL_W wide) and should draw the HUD exactly as for one eye.
    */
   draw: (
-    video: HTMLVideoElement | null,
+    source: HTMLVideoElement | HTMLCanvasElement | null,
     timeMs: number,
     drawOverlay: (ctx: CanvasRenderingContext2D, w: number, h: number) => void,
   ) => void;
@@ -25,9 +25,9 @@ export type CastCompositor = {
 };
 
 /** Same crop as `object-fit: cover`. */
-function drawCover(ctx: CanvasRenderingContext2D, video: HTMLVideoElement, w: number, h: number) {
-  const vw = video.videoWidth;
-  const vh = video.videoHeight;
+function drawCover(ctx: CanvasRenderingContext2D, video: HTMLVideoElement | HTMLCanvasElement, w: number, h: number) {
+  const vw = video instanceof HTMLVideoElement ? video.videoWidth : video.width;
+  const vh = video instanceof HTMLVideoElement ? video.videoHeight : video.height;
   const scale = Math.max(w / vw, h / vh);
   const sw = w / scale;
   const sh = h / scale;
@@ -56,12 +56,13 @@ export function createCastCompositor(): CastCompositor {
   return {
     stream,
     aspect: OUT_W / OUT_H,
-    draw(video, timeMs, drawOverlay) {
+    draw(source, timeMs, drawOverlay) {
       if (timeMs - lastDraw < 1000 / FPS - 2) return;
       lastDraw = timeMs;
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, OUT_W, OUT_H);
-      if (video && video.videoWidth) drawCover(ctx, video, OUT_W, OUT_H);
+      const ready = source instanceof HTMLVideoElement ? source.videoWidth > 0 : !!source?.width;
+      if (source && ready) drawCover(ctx, source, OUT_W, OUT_H);
       drawOverlay(hctx, LOGICAL_W, OUT_H / scale);
       ctx.drawImage(hud, 0, 0);
     },

@@ -1,5 +1,5 @@
 import { DEFAULT_IPD_MM, DEFAULT_SETTINGS, PRESETS, detectPreset, getPreset, loadSettings, pxPerMm, saveSettings } from './config';
-import type { DataMode, Settings } from './config';
+import type { DataMode, Settings, ViewMode } from './config';
 import { describeStream, getZoom, getZoomRange, listCameras, setZoom, startCamera } from './camera';
 import { halfFovDeg, normalizeDeg, visibleHalfTan } from './geo';
 import { drawHud } from './hud';
@@ -14,6 +14,9 @@ import { createCastCompositor } from './cast/compositor';
 import type { CastCompositor } from './cast/compositor';
 import { startCastPublisher } from './cast/publisher';
 import type { CastPublisher } from './cast/publisher';
+import { startSimFeed } from './vr/scenario';
+import { createVRView } from './vr/vr';
+import type { VRView } from './vr/vr';
 import { startVoice } from './voice';
 import type { VoiceHandle } from './voice';
 
@@ -31,6 +34,7 @@ const presetSelect = document.getElementById('preset-select') as HTMLSelectEleme
 const ipdInput = document.getElementById('ipd-input') as HTMLInputElement;
 const cameraSelect = document.getElementById('camera-select') as HTMLSelectElement;
 const dataSelect = document.getElementById('data-select') as HTMLSelectElement;
+const viewSelect = document.getElementById('view-select') as HTMLSelectElement;
 const voiceCheck = document.getElementById('voice-check') as HTMLInputElement;
 const radiusInput = document.getElementById('radius-input') as HTMLInputElement;
 const castCheck = document.getElementById('cast-check') as HTMLInputElement;
@@ -57,6 +61,8 @@ let lastView: HudResult = { focus: null, inView: [] };
 const ANSWER_LINGER_MS = 7000;
 let rafId = 0;
 let devHeading = 0;
+let devPitch = 0;
+let vrView: VRView | null = null;
 /** Latest computed half-FOV, for the calibration toast and debug line. */
 let lastHalfFovDeg = 0;
 let hudError = '';
@@ -88,6 +94,7 @@ async function initStartScreen() {
   presetSelect.value = settings.presetId;
   ipdInput.value = String(settings.ipdMm);
   dataSelect.value = DATA_OVERRIDE ?? settings.dataMode;
+  viewSelect.value = settings.viewMode;
   voiceCheck.checked = settings.voiceEnabled;
   radiusInput.value = settings.radiusKm == null ? '' : String(settings.radiusKm);
   castCheck.checked = settings.castEnabled;
@@ -123,6 +130,7 @@ function readSettingsFromForm() {
     ipdMm: Number.isFinite(ipd) && ipd > 0 ? ipd : DEFAULT_IPD_MM,
     cameraId: cameraSelect.value,
     dataMode: dataSelect.value as DataMode,
+    viewMode: viewSelect.value as ViewMode,
     voiceEnabled: voiceCheck.checked,
     radiusKm: parseRadius(radiusInput.value),
     castEnabled: castCheck.checked,
@@ -159,10 +167,13 @@ function relayout() {
     viewScale: settings.viewScale,
     tiltDeg: settings.tiltDeg,
   });
+  vrView?.resize();
   renderOverlay();
 }
 
 function currentHeading(): number | null {
+  // In VR the HUD follows the rendered view exactly, so icons stay on the 3D planes.
+  if (vrView && (DEV || orientation?.getRotation())) return vrView.headingDeg();
   if (DEV) return devHeading;
   return orientation?.get()?.headingDeg ?? null;
 }
@@ -177,19 +188,21 @@ function frame() {
   const video = view.eyes[0].video;
   const streamAspect = video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 4 / 3;
   const zoom = (stream && getZoom(stream)) || 1;
-  const halfTan = visibleHalfTan(
-    getPreset(settings.presetId).cameraHalfTan1x,
-    zoom,
-    width / height,
-    streamAspect,
-    settings.fovScale,
-  );
+  const halfTan = vrView
+    ? vrView.halfTan
+    : visibleHalfTan(getPreset(settings.presetId).cameraHalfTan1x, zoom, width / height, streamAspect, settings.fovScale);
   lastHalfFovDeg = halfFovDeg(halfTan);
 
   const feedState = feed?.get();
   // Filtering here covers everything downstream: compass bar, card, radar, edge arrow, and voice context.
   const allPlanes = feedState?.planes ?? [];
   const planes = settings.showGrounded ? allPlanes : allPlanes.filter((p) => !p.onGround);
+  if (vrView) {
+    if (DEV) vrView.setYawPitch(devHeading, devPitch);
+    else vrView.setDeviceRotation(orientation?.getRotation() ?? null);
+    // Rendered before the HUD so the HUD's heading matches this frame's view.
+    vrView.render(planes, performance.now(), lastView.focus?.id ?? null);
+  }
   const hud = {
     headingDeg: currentHeading(),
     halfTan,
@@ -207,14 +220,17 @@ function frame() {
 
   if (cast) {
     // The cast frame has its own aspect, so its visible FOV differs from an eye's.
-    const castHalfTan = visibleHalfTan(
-      getPreset(settings.presetId).cameraHalfTan1x,
-      zoom,
-      cast.compositor.aspect,
-      streamAspect,
-      settings.fovScale,
-    );
-    cast.compositor.draw(video.videoWidth ? video : null, hud.timeMs, (ctx, w, h) => {
+    const castHalfTan = vrView
+      ? visibleHalfTan(vrView.halfTan, 1, cast.compositor.aspect, width / height, 1)
+      : visibleHalfTan(
+          getPreset(settings.presetId).cameraHalfTan1x,
+          zoom,
+          cast.compositor.aspect,
+          streamAspect,
+          settings.fovScale,
+        );
+    const source = vrView ? vrView.canvas : video.videoWidth ? video : null;
+    cast.compositor.draw(source, hud.timeMs, (ctx, w, h) => {
       drawHud(ctx, w, h, { ...hud, halfTan: castHalfTan });
       drawCastCrosshair(ctx, w, h);
     });
@@ -309,11 +325,15 @@ async function start() {
   startStatus.textContent = 'Starting camera…';
 
   try {
-    try {
-      stream = await startCamera(settings.cameraId || undefined);
-    } catch (err) {
-      if (!DEV) throw err;
-      stream = null; // Dev mode works without a camera.
+    if (settings.viewMode === 'vr') {
+      stream = null; // VR renders its own scene; no camera needed.
+    } else {
+      try {
+        stream = await startCamera(settings.cameraId || undefined);
+      } catch (err) {
+        if (!DEV) throw err;
+        stream = null; // Dev mode works without a camera.
+      }
     }
     startStatus.textContent = 'Camera open, entering view…';
     await Promise.race([immersive, new Promise((r) => setTimeout(r, 1500))]);
@@ -321,7 +341,9 @@ async function start() {
     keepScreenOn();
 
     if (!DEV) orientation = startOrientation(FORCE_ORIENT_EVENTS);
-    if (settings.dataMode !== 'fixture') {
+    if (settings.dataMode === 'sim') {
+      feed = startSimFeed();
+    } else if (settings.dataMode !== 'fixture') {
       const demo = settings.dataMode === 'demo';
       if (!demo) gps = watchPosition();
       feed = startLiveFeed({
@@ -335,6 +357,7 @@ async function start() {
     }
 
     view = createStereoView(stereoEl, stream);
+    if (settings.viewMode === 'vr') vrView = createVRView(view.eyes);
     mode = null;
     longPressFired = false;
     // Swallow the Android back gesture while in the view (see popstate handler).
@@ -391,6 +414,8 @@ function stopVoiceAssistant() {
 /** Back to the start screen (e.g. after the Android back gesture exits fullscreen). */
 function stop() {
   stopVoiceAssistant();
+  vrView?.stop();
+  vrView = null;
   stopCasting();
   cancelAnimationFrame(rafId);
   clearTimeout(lockTimer);
@@ -550,6 +575,9 @@ window.addEventListener('keydown', (e) => {
   const step = e.shiftKey ? 10 : 2;
   if (e.key === 'ArrowLeft') devHeading = normalizeDeg(devHeading - step);
   else if (e.key === 'ArrowRight') devHeading = normalizeDeg(devHeading + step);
+  // Look up/down (VR).
+  else if (e.key === 'ArrowUp') devPitch = Math.min(85, devPitch + step);
+  else if (e.key === 'ArrowDown') devPitch = Math.max(-85, devPitch - step);
   // Skip the wake phrase on desktop: V = start listening for a question.
   else if (e.key === 'v') voice?.listen();
 });

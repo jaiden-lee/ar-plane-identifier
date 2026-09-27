@@ -51,6 +51,7 @@ export type Settings = {
    *   fixture - shared/fixtures/demo-planes.json, no backend
    */
   dataMode: DataMode;
+  viewMode: ViewMode;
   /** "Hey Grok" voice assistant (Allison's module in src/voice/). */
   voiceEnabled: boolean;
   /** Plane search radius. null = flight-service's defaults (15 km live, 40 km demo). */
@@ -61,7 +62,10 @@ export type Settings = {
   showGrounded: boolean;
 };
 
-export type DataMode = 'demo' | 'live' | 'fixture';
+export type DataMode = 'demo' | 'live' | 'fixture' | 'sim';
+
+/** 'ar' = camera passthrough; 'vr' = virtual Atlanta scene rendered in 3D (src/vr/). */
+export type ViewMode = 'ar' | 'vr';
 
 export const DEFAULT_SETTINGS: Settings = {
   presetId: 'generic',
@@ -73,6 +77,7 @@ export const DEFAULT_SETTINGS: Settings = {
   cameraZoom: null,
   cameraId: '',
   dataMode: 'demo',
+  viewMode: 'ar',
   voiceEnabled: true,
   radiusKm: null,
   castEnabled: false,

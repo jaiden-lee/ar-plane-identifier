@@ -23,8 +23,16 @@
         <select id="camera-select"></select>
       </label>
       <label>
+        View
+        <select id="view-select">
+          <option value="ar">Camera (AR)</option>
+          <option value="vr">Virtual sky (VR)</option>
+        </select>
+      </label>
+      <label>
         Data
         <select id="data-select">
+          <option value="sim">Simulated ATC scenario</option>
           <option value="demo">Demo snapshot (Georgia Tech)</option>
           <option value="live">Live (GPS)</option>
           <option value="fixture">Offline (no backend)</option>

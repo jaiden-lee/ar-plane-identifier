@@ -24,22 +24,32 @@ export type OrientationReading = {
 
 export type OrientationTracker = {
   get: () => OrientationReading | null;
+  /** Latest raw device->ENU rotation (row-major 3x3, magnetic north), for VR. Null until the first reading. */
+  getRotation: () => number[] | null;
   stop: () => void;
 };
 
 type Vec3 = [number, number, number];
 
-/** Quaternion [x, y, z, w] (device -> earth) to camera direction. */
-function cameraVectorFromQuaternion([x, y, z, w]: number[]): Vec3 {
-  return [-2 * (x * z + w * y), -2 * (y * z - w * x), -(1 - 2 * (x * x + y * y))];
+/** Quaternion [x, y, z, w] (device -> earth) to a row-major 3x3 rotation matrix. */
+function rotationFromQuaternion([x, y, z, w]: number[]): number[] {
+  return [
+    1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w),
+    2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w),
+    2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y),
+  ];
 }
 
-/** W3C DeviceOrientation Euler angles (R = Rz(alpha) Rx(beta) Ry(gamma)) to camera direction. */
-function cameraVectorFromEuler(alpha: number, beta: number, gamma: number): Vec3 {
+/** W3C DeviceOrientation Euler angles (R = Rz(alpha) Rx(beta) Ry(gamma)) to a row-major 3x3 rotation matrix. */
+function rotationFromEuler(alpha: number, beta: number, gamma: number): number[] {
   const [sA, cA] = [Math.sin(toRad(alpha)), Math.cos(toRad(alpha))];
   const [sB, cB] = [Math.sin(toRad(beta)), Math.cos(toRad(beta))];
   const [sG, cG] = [Math.sin(toRad(gamma)), Math.cos(toRad(gamma))];
-  return [-(cA * sG + sA * sB * cG), -(sA * sG - cA * sB * cG), -(cB * cG)];
+  return [
+    cA * cG - sA * sB * sG, -cB * sA, cG * sA * sB + cA * sG,
+    cG * sA + cA * sB * sG, cA * cB, sA * sG - cA * cG * sB,
+    -cB * sG, sB, cB * cG,
+  ];
 }
 
 /** iOS only: motion access must be requested from a user gesture. Call first thing in the tap handler. */
@@ -57,14 +67,24 @@ export async function requestOrientationPermission(): Promise<void> {
 /**
  * Prefers the AbsoluteOrientationSensor (quaternion, Android Chrome), falls back to
  * `deviceorientationabsolute` events. `?orient=event` forces the event path for debugging.
+ * If the sensor starts but never delivers a reading (it can go silent without an error, e.g. after
+ * a permission prompt), the event path is started as well after 1.5 s.
  */
 export function startOrientation(forceEvents = false): OrientationTracker {
   let smoothed: Vec3 | null = null;
+  let rotation: number[] | null = null;
   let source: OrientationSource = 'none';
-  let stopFn = () => {};
+  let sensorReadings = 0;
+  let eventsStarted = false;
+  const stoppers: Array<() => void> = [];
 
-  const push = (v: Vec3, src: OrientationSource) => {
+  const push = (r: number[], src: OrientationSource) => {
+    // Once the sensor delivers, ignore the event fallback if both are running.
+    if (src !== 'sensor' && source === 'sensor') return;
     source = src;
+    rotation = r;
+    // Rear camera looks along device -Z: its direction in ENU is -(3rd column of R).
+    const v: Vec3 = [-r[2], -r[5], -r[8]];
     // Smooth the direction vector (not the angle) so 359° -> 0° doesn't jump.
     smoothed = smoothed
       ? [
@@ -76,26 +96,35 @@ export function startOrientation(forceEvents = false): OrientationTracker {
   };
 
   const useEvents = () => {
+    if (eventsStarted) return;
+    eventsStarted = true;
     const type = 'ondeviceorientationabsolute' in window ? 'deviceorientationabsolute' : 'deviceorientation';
     const handler = (e: DeviceOrientationEvent) => {
       if (e.alpha == null || e.beta == null || e.gamma == null) return;
-      push(cameraVectorFromEuler(e.alpha, e.beta, e.gamma), e.absolute ? 'absolute-event' : 'relative-event');
+      push(rotationFromEuler(e.alpha, e.beta, e.gamma), e.absolute ? 'absolute-event' : 'relative-event');
     };
     window.addEventListener(type, handler as EventListener);
-    stopFn = () => window.removeEventListener(type, handler as EventListener);
+    stoppers.push(() => window.removeEventListener(type, handler as EventListener));
   };
 
   const Sensor = (window as any).AbsoluteOrientationSensor;
   if (Sensor && !forceEvents) {
     try {
       const sensor = new Sensor({ frequency: 60, referenceFrame: 'device' });
-      sensor.addEventListener('reading', () => push(cameraVectorFromQuaternion(sensor.quaternion), 'sensor'));
+      sensor.addEventListener('reading', () => {
+        sensorReadings++;
+        push(rotationFromQuaternion(sensor.quaternion), 'sensor');
+      });
       sensor.addEventListener('error', () => {
         sensor.stop();
         useEvents();
       });
       sensor.start();
-      stopFn = () => sensor.stop();
+      stoppers.push(() => sensor.stop());
+      const fallback = window.setTimeout(() => {
+        if (sensorReadings === 0) useEvents();
+      }, 1500);
+      stoppers.push(() => clearTimeout(fallback));
     } catch {
       useEvents();
     }
@@ -114,6 +143,7 @@ export function startOrientation(forceEvents = false): OrientationTracker {
         source,
       };
     },
-    stop: () => stopFn(),
+    getRotation: () => rotation,
+    stop: () => stoppers.forEach((f) => f()),
   };
 }
