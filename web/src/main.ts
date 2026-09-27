@@ -34,6 +34,7 @@ const dataSelect = document.getElementById('data-select') as HTMLSelectElement;
 const voiceCheck = document.getElementById('voice-check') as HTMLInputElement;
 const radiusInput = document.getElementById('radius-input') as HTMLInputElement;
 const castCheck = document.getElementById('cast-check') as HTMLInputElement;
+const groundedCheck = document.getElementById('grounded-check') as HTMLInputElement;
 const startBtn = document.getElementById('start-btn') as HTMLButtonElement;
 const startStatus = document.getElementById('start-status')!;
 const stereoEl = document.getElementById('stereo')!;
@@ -90,6 +91,7 @@ async function initStartScreen() {
   voiceCheck.checked = settings.voiceEnabled;
   radiusInput.value = settings.radiusKm == null ? '' : String(settings.radiusKm);
   castCheck.checked = settings.castEnabled;
+  groundedCheck.checked = settings.showGrounded;
   await refreshCameraList();
 
   if (DEV) startStatus.textContent = 'Dev mode: ← → turn (hold Shift for 10°).';
@@ -124,6 +126,7 @@ function readSettingsFromForm() {
     voiceEnabled: voiceCheck.checked,
     radiusKm: parseRadius(radiusInput.value),
     castEnabled: castCheck.checked,
+    showGrounded: groundedCheck.checked,
   };
   radiusInput.value = settings.radiusKm == null ? '' : String(settings.radiusKm);
   saveSettings(settings);
@@ -184,11 +187,16 @@ function frame() {
   lastHalfFovDeg = halfFovDeg(halfTan);
 
   const feedState = feed?.get();
+  // Filtering here covers everything downstream: compass bar, card, radar, edge arrow, and voice context.
+  const allPlanes = feedState?.planes ?? [];
+  const planes = settings.showGrounded ? allPlanes : allPlanes.filter((p) => !p.onGround);
   const hud = {
     headingDeg: currentHeading(),
     halfTan,
-    planes: feedState?.planes ?? [],
-    status: feedState?.status ?? '',
+    planes,
+    status: planes.length < allPlanes.length
+      ? `${feedState?.status ?? ''} · ${allPlanes.length - planes.length} on ground hidden`
+      : feedState?.status ?? '',
     timeMs: performance.now(),
     voice: voiceHud,
   };

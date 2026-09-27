@@ -57,6 +57,8 @@ export type Settings = {
   radiusKm: number | null;
   /** Stream the view (camera + HUD) to /cast.html on a laptop over WebRTC. */
   castEnabled: boolean;
+  /** Include aircraft on the ground (taxiing/parked, shown grey). Off = airborne only. */
+  showGrounded: boolean;
 };
 
 export type DataMode = 'demo' | 'live' | 'fixture';
@@ -74,6 +76,7 @@ export const DEFAULT_SETTINGS: Settings = {
   voiceEnabled: true,
   radiusKm: null,
   castEnabled: false,
+  showGrounded: true,
 };
 
 const STORAGE_KEY = 'ar-plane-settings-v4';
