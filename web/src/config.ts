@@ -60,6 +60,8 @@ export type Settings = {
   castEnabled: boolean;
   /** Include aircraft on the ground (taxiing/parked, shown grey). Off = airborne only. */
   showGrounded: boolean;
+  /** Capture the first set of aircraft and hold it (no movement, no more polling). */
+  freezePlanes: boolean;
 };
 
 export type DataMode = 'demo' | 'live' | 'fixture' | 'sim';
@@ -82,6 +84,7 @@ export const DEFAULT_SETTINGS: Settings = {
   radiusKm: null,
   castEnabled: false,
   showGrounded: true,
+  freezePlanes: true,
 };
 
 const STORAGE_KEY = 'ar-plane-settings-v4';

@@ -228,13 +228,18 @@ function flightAt(f: Flight, tS: number): Plane {
 
 /** Scenario clock: 1.0 = real time. */
 const SIM_SPEED = 1;
+/**
+ * The scenario starts this far in, at a moment where the story is already set up: DAL1776 has
+ * declared its 7700 emergency and traffic is spread across the sky. A frozen scene shows this moment.
+ */
+const SIM_START_S = 90;
 
 /** Data feed for the scripted scenario ('sim' data mode). Recomputed on every read, so motion is smooth. */
 export function startSimFeed(): PlaneFeed {
   const t0 = performance.now();
   return {
     get: () => {
-      const tS = ((performance.now() - t0) / 1000) * SIM_SPEED;
+      const tS = SIM_START_S + ((performance.now() - t0) / 1000) * SIM_SPEED;
       return { planes: FLIGHTS.map((f) => flightAt(f, tS)), status: 'simulation' };
     },
     stop: () => {},

@@ -7,7 +7,7 @@ import type { HudResult, VoiceHud } from './hud';
 import { requestOrientationPermission, startOrientation } from './orientation';
 import type { OrientationTracker } from './orientation';
 import { startFixtureFeed, startLiveFeed, watchPosition } from './planes';
-import type { PlaneFeed } from './planes';
+import type { Plane, PlaneFeed } from './planes';
 import { createStereoView } from './stereo';
 import type { StereoView } from './stereo';
 import { createCastCompositor } from './cast/compositor';
@@ -39,6 +39,7 @@ const voiceCheck = document.getElementById('voice-check') as HTMLInputElement;
 const radiusInput = document.getElementById('radius-input') as HTMLInputElement;
 const castCheck = document.getElementById('cast-check') as HTMLInputElement;
 const groundedCheck = document.getElementById('grounded-check') as HTMLInputElement;
+const freezeCheck = document.getElementById('freeze-check') as HTMLInputElement;
 const startBtn = document.getElementById('start-btn') as HTMLButtonElement;
 const startStatus = document.getElementById('start-status')!;
 const stereoEl = document.getElementById('stereo')!;
@@ -63,6 +64,8 @@ let rafId = 0;
 let devHeading = 0;
 let devPitch = 0;
 let vrView: VRView | null = null;
+/** With "Freeze planes": the first non-empty set of aircraft, held for the rest of the session. */
+let frozenPlanes: Plane[] | null = null;
 /** Latest computed half-FOV, for the calibration toast and debug line. */
 let lastHalfFovDeg = 0;
 let hudError = '';
@@ -99,6 +102,7 @@ async function initStartScreen() {
   radiusInput.value = settings.radiusKm == null ? '' : String(settings.radiusKm);
   castCheck.checked = settings.castEnabled;
   groundedCheck.checked = settings.showGrounded;
+  freezeCheck.checked = settings.freezePlanes;
   await refreshCameraList();
 
   if (DEV) startStatus.textContent = 'Dev mode: ← → turn (hold Shift for 10°).';
@@ -135,6 +139,7 @@ function readSettingsFromForm() {
     radiusKm: parseRadius(radiusInput.value),
     castEnabled: castCheck.checked,
     showGrounded: groundedCheck.checked,
+    freezePlanes: freezeCheck.checked,
   };
   radiusInput.value = settings.radiusKm == null ? '' : String(settings.radiusKm);
   saveSettings(settings);
@@ -195,7 +200,14 @@ function frame() {
 
   const feedState = feed?.get();
   // Filtering here covers everything downstream: compass bar, card, radar, edge arrow, and voice context.
-  const allPlanes = feedState?.planes ?? [];
+  let allPlanes = feedState?.planes ?? [];
+  if (settings.freezePlanes) {
+    if (!frozenPlanes && allPlanes.length) {
+      frozenPlanes = allPlanes.map((p) => ({ ...p }));
+      feed?.stop(); // nothing more to fetch
+    }
+    if (frozenPlanes) allPlanes = frozenPlanes;
+  }
   const planes = settings.showGrounded ? allPlanes : allPlanes.filter((p) => !p.onGround);
   if (vrView) {
     if (DEV) vrView.setYawPitch(devHeading, devPitch);
@@ -207,9 +219,13 @@ function frame() {
     headingDeg: currentHeading(),
     halfTan,
     planes,
-    status: planes.length < allPlanes.length
-      ? `${feedState?.status ?? ''} · ${allPlanes.length - planes.length} on ground hidden`
-      : feedState?.status ?? '',
+    status: [
+      feedState?.status ?? '',
+      frozenPlanes ? 'frozen' : '',
+      planes.length < allPlanes.length ? `${allPlanes.length - planes.length} on ground hidden` : '',
+    ]
+      .filter(Boolean)
+      .join(' · '),
     timeMs: performance.now(),
     voice: voiceHud,
   };
@@ -413,6 +429,7 @@ function stopVoiceAssistant() {
 
 /** Back to the start screen (e.g. after the Android back gesture exits fullscreen). */
 function stop() {
+  frozenPlanes = null;
   stopVoiceAssistant();
   vrView?.stop();
   vrView = null;

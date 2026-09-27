@@ -17,7 +17,9 @@ export const VR_HFOV_DEG = 80;
 /** Eye separation in meters (real stereo depth for nearby things like the rooftop and low aircraft). */
 const IPD_M = 0.064;
 /** Aircraft are scaled up with distance so they stay visible (~constant angular size beyond this range). */
-const TRUE_SCALE_RANGE_M = 450;
+const TRUE_SCALE_RANGE_M = 220;
+/** Never smaller than this multiple of true size (close aircraft still read clearly). */
+const MIN_SCALE = 1.5;
 /** Status halo size (fraction of the view; sprites ignore distance). */
 const HALO_SIZE = 0.09;
 const HALO_SIZE_FOCUSED = 0.13;
@@ -79,8 +81,9 @@ function haloTexture(): THREE.Texture {
 }
 
 export function createVRView(eyes: [Eye, Eye]): VRView {
-  const { scene, update: updateWorld } = createWorld();
-  const halfTan = Math.tan(THREE.MathUtils.degToRad(VR_HFOV_DEG / 2));
+  const world = createWorld();
+  const { scene, update: updateWorld } = world;
+    const halfTan = Math.tan(THREE.MathUtils.degToRad(VR_HFOV_DEG / 2));
 
   // Head: position on the rooftop, orientation from the phone. Eye cameras are children, offset by IPD/2.
   const head = new THREE.Object3D();
@@ -88,16 +91,17 @@ export function createVRView(eyes: [Eye, Eye]): VRView {
   scene.add(head);
   const targetQ = new THREE.Quaternion();
 
-  // One WebGL renderer (off-DOM) draws each eye in turn; each result is copied into that eye's 2D
-  // canvas. One context is lighter on the phone than two, and renders both eyes identically.
+  // One WebGL renderer (off-DOM) renders BOTH eyes side by side into one wide canvas (left/right
+  // viewports), then each half is copied into that eye's 2D canvas. Rendering an eye, copying it, then
+  // re-rendering the other made the eyes flicker (the rooftop vanished in alternating eyes).
   const renderer = new THREE.WebGLRenderer({
     antialias: true,
-    // Scene spans 0.5 m (rooftop) to 400 km (sky): log depth avoids z-fighting (runways vs ground).
-    logarithmicDepthBuffer: true,
+    // Standard depth (not logarithmic): log depth mis-sorted big ground triangles near the camera and
+    // drew the ground over the rooftop. Ground-level details use height + polygon offset instead.
     powerPreference: 'high-performance',
   });
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.55;
+  renderer.toneMappingExposure = 0.62;
   const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.75);
   const eyeCanvases: HTMLCanvasElement[] = [];
   const eyeCtxs: CanvasRenderingContext2D[] = [];
@@ -109,7 +113,8 @@ export function createVRView(eyes: [Eye, Eye]): VRView {
     eye.root.insertBefore(canvas, eye.ctx.canvas);
     eyeCanvases.push(canvas);
     eyeCtxs.push(canvas.getContext('2d')!);
-    const cam = new THREE.PerspectiveCamera(60, 1, 0.5, 400_000);
+    // near 1 m (the roof is 1.7 m below the eyes), far 300 km (the sky dome is 250 km).
+    const cam = new THREE.PerspectiveCamera(60, 1, 1, 300_000);
     cam.position.x = (i === 0 ? -1 : 1) * (IPD_M / 2);
     head.add(cam);
     cameras.push(cam);
@@ -121,13 +126,17 @@ export function createVRView(eyes: [Eye, Eye]): VRView {
   scene.add(aircraftRoot);
   let lastMs = performance.now();
 
+  let eyeW = 1;
+  let eyeH = 1;
   function resize() {
-    const w = eyes[0].root.clientWidth || 1;
-    const h = eyes[0].root.clientHeight || 1;
+    eyeW = eyes[0].root.clientWidth || 1;
+    eyeH = eyes[0].root.clientHeight || 1;
+    const w = eyeW;
+    const h = eyeH;
     renderer.setPixelRatio(pixelRatio);
-    renderer.setSize(w, h, false);
+    renderer.setSize(w * 2, h, false);
     eyes.forEach((_, i) => {
-      eyeCanvases[i].width = renderer.domElement.width;
+      eyeCanvases[i].width = Math.floor(renderer.domElement.width / 2);
       eyeCanvases[i].height = renderer.domElement.height;
       const cam = cameras[i];
       cam.aspect = w / h;
@@ -227,7 +236,7 @@ export function createVRView(eyes: [Eye, Eye]): VRView {
 
       // Keep aircraft visible at a distance: grow with range beyond TRUE_SCALE_RANGE_M.
       const dist = g.position.distanceTo(head.position);
-      g.scale.setScalar(Math.max(1, dist / TRUE_SCALE_RANGE_M));
+      g.scale.setScalar(Math.max(MIN_SCALE, dist / TRUE_SCALE_RANGE_M));
       t.model.animate(timeMs);
 
       // Status halo (constant screen size), blinking for emergencies; focused aircraft in yellow.
@@ -259,13 +268,23 @@ export function createVRView(eyes: [Eye, Eye]): VRView {
       tracked.delete(id);
     }
 
+    // Both eyes in one pass (viewport + scissor per half), then copy each half out.
+    renderer.setScissorTest(true);
     cameras.forEach((cam, i) => {
+      renderer.setViewport(i * eyeW, 0, eyeW, eyeH);
+      renderer.setScissor(i * eyeW, 0, eyeW, eyeH);
       renderer.render(scene, cam);
-      eyeCtxs[i].drawImage(renderer.domElement, 0, 0);
     });
+    renderer.setScissorTest(false);
+    const src = renderer.domElement;
+    const halfPx = Math.floor(src.width / 2);
+    eyeCtxs.forEach((ctx, i) => ctx.drawImage(src, i * halfPx, 0, halfPx, src.height, 0, 0, halfPx, src.height));
   }
 
   resize();
+  // Compile every shader up front so nothing pops in during the first frames (otherwise objects are
+  // skipped until their shader is ready, and the ground shows through the rooftop for a moment).
+  renderer.compile(scene, cameras[0]);
   return {
     halfTan,
     headingDeg,
