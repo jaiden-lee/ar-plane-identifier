@@ -85,6 +85,7 @@ Phone browser (web app, via ngrok HTTPS)
 | `web/src/voice/` | **Allison** | Browser-side voice: mic, wake phrase / gesture trigger, speech-to-text, text-to-speech, calls `/api/voice/ask` |
 | `voice-service/` | **Allison** | Backend: builds the Grok prompt from question + plane context, calls Grok, returns answer |
 | `flight-service/` | **Wesley** | Backend: adsb.lol fetching, normalization to `Plane`, bearing/distance math, aircraft type names, origin/destination lookup, demo snapshot |
+| `app/android/` | **Everyone** (Wesley, Allison, Jaiden) | **SkyLens**, the standalone Android app (Capacitor APK): live planes around the phone's GPS straight from adsb.lol, no servers, no voice. Imports the HUD, stereo, orientation, camera, geo, format and config modules from `web/src` read-only, so changes there can break its build: run `npm run apk` in `app/android/` to check. See `app/android/README.md` |
 | `shared/` | **Everyone** (change only with team agreement) | `fixtures/demo-planes.json` (sample response for the web app to develop against before the service is ready) |
 | `CLAUDE.md` | **Everyone** | This file. Contract changes go here first. |
 
