@@ -9,6 +9,13 @@ Standalone APK (Capacitor). The web code is bundled into the app, and only adsb.
   - Search radius (default 20 km), camera, lens spacing.
   - **Done** or back returns to the view.
   - If the view can't start (e.g. camera permission denied), settings open with the reason.
+- **Compass calibration:** Settings → **🧭 Calibrate compass**. Draw a figure 8 with the phone while twisting it.
+  - **Ring (coverage):** fills as the phone is turned through different orientations (14 field directions, 10 needed).
+  - **Consistency (the quality measure):** a calibrated compass reads the same field strength whichever way the phone points. Each direction keeps a running average of the strength seen there; consistency is ± half the max–min spread, as a % of the median. **Good ≤ ±5%**, Fair ≤ ±10%, Poor above. *Calibrated* = 10 directions covered and Good consistency over at least 8 of them.
+  - **Detail line:** the live field strength, the strength Earth's field model expects at your last GPS position, and Android's own 4-level rating (Unreliable/Low/Medium/High). That rating is vendor-defined and often stays Low indoors, so it's a hint only.
+  - **Interference:** readings more than 25% off the expected strength (or outside 22–65 µT before any GPS fix) are ignored, and a warning shows.
+  - Android does the actual calibration: `CompassPlugin.java` keeps the magnetometer running and reports what browsers don't expose. Logic: `src/compass-calibration.ts`.
+- **Magnetic declination:** true north is corrected with the local declination from Android's World Magnetic Model (`GeomagneticField`, via `CompassPlugin.fieldModel`), computed on the first GPS fix and after moving 20 km, and saved for the next launch. `web/src/orientation.ts` still assumes Atlanta (−5.3°); `src/compass.ts` adds the difference. The info line shows it (`decl -4.6°`).
 - **Fine-tuning in the headset:** double-tap the middle to unlock. Then middle tap = next setting (zoom → tilt → spacing → shift → size → fov → info), left/right = adjust.
 - **Back in the view:** exits the app.
 - **Live data:** adsb.lol rate-limits per IP. The app polls every 5–30 s, adapting to 429s and slow answers, and moves planes along their track in between. The info line shows the data age and poll interval.
@@ -70,6 +77,7 @@ Open `native/` in Android Studio for logcat and debugging. Inspect the WebView f
     - `app/src/main/AndroidManifest.xml`: permissions, `sensorLandscape`.
     - `MainActivity.java`: immersive fullscreen, draw under the cutout, keep screen on.
     - `CameraFovPlugin.java`: exact per-lens FOV for label placement.
+    - `CompassPlugin.java`: magnetometer readings + Android's compass accuracy for the calibration screen, and Earth's field model (declination, expected strength) at a position.
     - `ScreenSizePlugin.java`: physical screen size, so the two eyes sit under the lenses on any phone. There's no phone selector; fine-tune with the in-headset calibration.
     - `app/build.gradle`: version from `package.json`, release signing, `.debug` suffix.
     - `values/styles.xml`: launch background `#0b0d10`, no splash image.

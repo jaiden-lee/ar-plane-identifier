@@ -17,13 +17,15 @@ import type { Settings } from '@web/config';
 import { describeStream, getZoom, getZoomRange, listCameras, setZoom, startCamera } from '@web/camera';
 import { halfFovDeg, normalizeDeg, visibleHalfTan } from '@web/geo';
 import { drawHud } from '@web/hud';
-import { startOrientation } from '@web/orientation';
+import { MAG_DECLINATION_DEG, startOrientation } from '@web/orientation';
 import type { OrientationTracker } from '@web/orientation';
 import type { PlaneFeed } from '@web/planes';
 import { createStereoView } from '@web/stereo';
 import type { StereoView } from '@web/stereo';
 import { lensFov } from './camera-fov';
 import type { LensFov } from './camera-fov';
+import { declinationCorrectionDeg, fieldModel, updateFieldModel } from './compass';
+import { createCompassCalibration } from './compass-calibration';
 import { startLiveFeed } from './flights/feed';
 import { watchPosition } from './flights/gps';
 import type { GpsWatch } from './flights/gps';
@@ -42,6 +44,9 @@ const ipdInput = document.getElementById('ipd-input') as HTMLInputElement;
 const cameraSelect = document.getElementById('camera-select') as HTMLSelectElement;
 const radiusInput = document.getElementById('radius-input') as HTMLInputElement;
 const doneBtn = document.getElementById('done-btn') as HTMLButtonElement;
+const calibrateBtn = document.getElementById('calibrate-btn') as HTMLButtonElement;
+/** Compass calibration screen, opened from settings; closing it returns to settings. */
+const calibration = createCompassCalibration(() => (settingsScreen.hidden = false));
 const settingsStatus = document.getElementById('settings-status')!;
 const stereoEl = document.getElementById('stereo')!;
 
@@ -138,9 +143,14 @@ function relayout() {
   renderOverlay();
 }
 
+/**
+ * True-north heading of the rear camera. web/src/orientation.ts corrects magnetic north with Atlanta's
+ * fixed declination; this swaps in the local declination from Earth's field model (compass.ts).
+ */
 function currentHeading(): number | null {
   if (DEV) return devHeading;
-  return orientation?.get()?.headingDeg ?? null;
+  const h = orientation?.get()?.headingDeg;
+  return h == null ? null : normalizeDeg(h + declinationCorrectionDeg());
 }
 
 /** Per-frame: compute the visible FOV and draw the HUD canvas in both eyes. */
@@ -181,10 +191,15 @@ function renderOverlay() {
   let debug = '';
   if (mode === 'info') {
     const o = orientation?.get();
-    const hdg = DEV ? `dev ${Math.round(devHeading)}°` : o ? `${Math.round(o.headingDeg)}° ${o.source}` : 'no compass';
+    const heading = currentHeading();
+    const hdg = DEV ? `dev ${Math.round(devHeading)}°` : o && heading != null ? `${Math.round(heading)}° ${o.source}` : 'no compass';
+    const model = fieldModel();
+    const decl = model
+      ? `decl ${model.declinationDeg > 0 ? '+' : ''}${model.declinationDeg.toFixed(1)}°${model.source === 'saved' ? ' (saved)' : ''}`
+      : `decl ${MAG_DECLINATION_DEG}° (Atlanta default)`;
     const lensInfo = lens ? `camera ${lens.cameraId} ${Math.round(halfFovDeg(lens.halfTan1x) * 2)}°` : 'assumed';
     const screenInfo = screenMm ? `screen ${Math.round(screenMm)}mm` : `screen ~${FALLBACK.screenWidthMm}mm assumed`;
-    debug = `<div class="debug">${hdg} · fov ${Math.round(lastHalfFovDeg * 2)}° (lens ${lensInfo}) · ${feed?.get().status ?? ''}<br>
+    debug = `<div class="debug">${hdg} · ${decl} · fov ${Math.round(lastHalfFovDeg * 2)}° (lens ${lensInfo}) · ${feed?.get().status ?? ''}<br>
       ${screenInfo} · tilt ${settings.tiltDeg}° · ${settings.ipdMm}mm · shift ${settings.offsetMm}mm · ${Math.round(settings.viewScale * 100)}% · ${stream ? describeStream(stream) : 'no camera'}</div>`;
   }
   const error = hudError ? `<div class="hud-error">${hudError}</div>` : '';
@@ -196,7 +211,7 @@ function renderOverlay() {
 /** Heading + plane data. Stopped while the app is in the background. */
 function startTracking() {
   if (!DEV) orientation = startOrientation();
-  const watch = watchPosition();
+  const watch = watchPosition((pos) => updateFieldModel(pos.lat, pos.lon));
   gps = watch;
   feed = startLiveFeed({ radiusKm: settings.radiusKm, getPosition: watch.get });
 }
@@ -470,6 +485,10 @@ function showToast(text: string) {
 }
 
 doneBtn.addEventListener('click', start);
+calibrateBtn.addEventListener('click', () => {
+  settingsScreen.hidden = true;
+  calibration.open();
+});
 // ⚙ sits outside #stereo, so its taps never reach the calibration tap handler.
 settingsBtn.addEventListener('click', openSettings);
 stereoEl.addEventListener('click', onViewTap);
@@ -491,8 +510,12 @@ window.addEventListener('keydown', (e) => {
   else if (e.key === 'ArrowRight') devHeading = normalizeDeg(devHeading + step);
 });
 window.addEventListener('resize', relayout);
-// Back: in settings = close them (back to the view); in the view = leave the app.
-handleBackButton(() => (view ? exitApp() : start()));
+// Back: in compass calibration = back to settings; in settings = back to the view; in the view = leave the app.
+handleBackButton(() => {
+  if (calibration.isOpen()) calibration.close();
+  else if (view) exitApp();
+  else start();
+});
 handlePauseResume(suspend, resume);
 // Keep the info line's heading fresh while it's showing.
 setInterval(() => {

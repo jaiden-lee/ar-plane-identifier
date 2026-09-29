@@ -21,6 +21,7 @@ public class MainActivity extends BridgeActivity {
         // App-local plugins must be registered before the bridge starts.
         registerPlugin(CameraFovPlugin.class);
         registerPlugin(ScreenSizePlugin.class);
+        registerPlugin(CompassPlugin.class);
         super.onCreate(savedInstanceState);
         Window window = getWindow();
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);

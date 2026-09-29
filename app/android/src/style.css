@@ -92,6 +92,145 @@ body {
   opacity: 0.5;
 }
 
+.actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+/* Outlined pill: secondary action next to Done. */
+button.secondary,
+#cal-done {
+  padding: 11px 24px;
+  font-size: 1.05rem;
+  font-weight: 600;
+  border: 1.5px solid var(--accent);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--accent);
+}
+
+#cal-done {
+  padding: 11px 48px;
+}
+
+#cal-done.primary {
+  background: var(--accent);
+  color: #000;
+}
+
+/* Compass calibration (landscape: animation left, instructions + progress right) */
+
+#calibrate-screen {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 32px;
+  /* Side padding clears a punch-hole camera: the app draws under the cutout. */
+  padding: 12px 48px;
+}
+
+.cal-figure {
+  width: min(38vw, 320px);
+  flex: none;
+}
+
+.cal-figure path {
+  fill: none;
+  stroke: rgba(79, 195, 247, 0.35);
+  stroke-width: 2.5;
+  stroke-dasharray: 5 5;
+}
+
+.cal-phone rect {
+  fill: #11161c;
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.cal-phone circle {
+  fill: var(--accent);
+}
+
+.cal-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  max-width: 440px;
+}
+
+.cal-panel h1 {
+  margin: 0;
+  font-size: 1.35rem;
+}
+
+.cal-steps {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.cal-status {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.cal-status p {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.cal-ring {
+  width: 84px;
+  height: 84px;
+  flex: none;
+  transform: rotate(-90deg);
+}
+
+.cal-ring-bg,
+.cal-ring-fg {
+  fill: none;
+  stroke-width: 9;
+}
+
+.cal-ring-bg {
+  stroke: #1d252e;
+}
+
+.cal-ring-fg {
+  stroke: var(--accent);
+  stroke-linecap: round;
+  stroke-dasharray: 263.9; /* 2 * pi * r (r = 42) */
+  stroke-dashoffset: 263.9;
+  transition: stroke-dashoffset 0.25s ease-out, stroke 0.25s;
+}
+
+#cal-percent {
+  position: absolute;
+  left: 0;
+  width: 84px;
+  text-align: center;
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+#cal-detail {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+#cal-warning {
+  margin-top: 6px;
+  color: #ff9f0a;
+  font-size: 0.85rem;
+}
+
 .hint {
   margin: 0;
   color: var(--muted);
